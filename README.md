@@ -1,4 +1,4 @@
-# silicon-manager
+# silicon-cli
 
 Our own **`silicon`** CLI — a Python (pip-installable) port of the original bash
 silicon manager. Manages silicon instances on a machine: create them from the
@@ -10,9 +10,7 @@ over unchanged.
 ## Install
 
 ```bash
-python3 -m venv ~/.silicon/cli-venv
-~/.silicon/cli-venv/bin/pip install /path/to/silicon-manager
-ln -sf ~/.silicon/cli-venv/bin/silicon ~/.local/bin/silicon   # ensure ~/.local/bin is on PATH
+pip install silicon-cli
 ```
 
 (Zero runtime dependencies — stdlib only.)

@@ -150,7 +150,7 @@ def watchdog_loop(name: str, path: str, pid_file: str) -> None:
 def _spawn_watchdog(name: str, path: str, pid_file: str) -> int:
     """Launch the detached watchdog; return its PID."""
     proc = subprocess.Popen(
-        [sys.executable, "-m", "silicon_manager.cli", "_watchdog", path, name, pid_file],
+        [sys.executable, "-m", "silicon_cli.cli", "_watchdog", path, name, pid_file],
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         start_new_session=True,  # detach so it survives this CLI exiting
     )

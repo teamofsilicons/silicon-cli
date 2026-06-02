@@ -37,6 +37,8 @@ def confirm(question: str, default_yes: bool = True) -> bool:
 
 
 def ask(question: str, default: str = "") -> str:
+    if not interactive():  # non-TTY: don't block on input(), take the default
+        return default
     label = f"{BOLD}? {question}" + (f" [{default}]" if default else "") + f":{RESET} "
     try:
         ans = input(label).strip()

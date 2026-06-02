@@ -207,10 +207,11 @@ def _interactive_setup(dst: Path, env_path: Path, sj: Path, name: str) -> None:
     if have_claude and have_codex:
         ui.info("Detected both claude and codex.")
         brain = "codex" if ui.ask("Which brain should Silicon use – claude or codex?", "claude") == "codex" else "claude"
+        # Each worker defaults to the chosen brain (matches the current stemcell CLI).
         workers = {
-            "browser": _choose_provider_order("browser"),
-            "terminal": _choose_provider_order("terminal"),
-            "writer": _choose_provider_order("writer"),
+            "browser": _choose_provider_order("browser", brain),
+            "terminal": _choose_provider_order("terminal", brain),
+            "writer": _choose_provider_order("writer", brain),
         }
     elif have_codex:
         brain = "codex"

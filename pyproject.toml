@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "silicon-manager"
+version = "1.0.0"
+description = "Silicon CLI — manage your silicon instances (Python port of the silicon manager)."
+requires-python = ">=3.9"
+dependencies = []   # stdlib only — keeps the install bulletproof
+
+[project.scripts]
+silicon = "silicon_manager.cli:main"
+
+[tool.setuptools]
+packages = ["silicon_manager"]

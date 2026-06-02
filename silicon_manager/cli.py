@@ -1,0 +1,250 @@
+"""silicon — manage your silicon instances. Dispatch mirrors the original bash CLI."""
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+from . import glassagent, process, registry, stemcell, sync, ui, update
+from .config import python_run_cmd
+
+COMMANDS = ["start", "stop", "restart", "status", "browser", "debug", "attach",
+            "pull", "push", "update", "list", "install", "new", "help", "script", "agent"]
+
+
+# ----------------------------------------------------------------- commands
+def cmd_list() -> None:
+    rows = registry.installs()
+    if not rows:
+        ui.info("No silicon installations found.")
+        ui.info("Run 'silicon install' to set up a new instance.")
+        return
+    print(f"\n{ui.BOLD}{ui.CYAN}Silicon Installations{ui.RESET}\n")
+    print(f"  {ui.DIM}{'#':<4}{'NAME':<22}{'STATUS':<10}PATH{ui.RESET}")
+    print(f"  {ui.DIM}{'---':<4}{'----':<22}{'------':<10}----{ui.RESET}")
+    for i in rows:
+        if process.is_running(i.pid_file):
+            pid = process.get_pid(i.pid_file)
+            status = f"{ui.GREEN}● running{ui.RESET}"
+            extra = f" {ui.DIM}(PID {pid}){ui.RESET}"
+        else:
+            status, extra = f"{ui.DIM}○ stopped{ui.RESET}", ""
+        print(f"  {i.index + 1:<4}{i.name:<22}{status}{extra}  {ui.DIM}{i.path}{ui.RESET}")
+    print()
+
+
+def _print_status(inst) -> None:
+    if process.is_running(inst.pid_file):
+        pid = process.get_pid(inst.pid_file)
+        print(f"\n{ui.BOLD}{inst.name}{ui.RESET} {ui.GREEN}● running{ui.RESET} (PID {pid})")
+    else:
+        print(f"\n{ui.BOLD}{inst.name}{ui.RESET} {ui.DIM}○ stopped{ui.RESET}")
+    print(f"{ui.DIM}  Path: {inst.path}{ui.RESET}\n")
+
+
+def cmd_status(target: str | None) -> None:
+    if target:
+        inst = registry.find(target)
+        if not inst:
+            cmd_list()
+            return
+        _print_status(inst)
+        return
+    inst = registry.find()
+    if inst:
+        _print_status(inst)
+    else:
+        cmd_list()
+
+
+def cmd_browser(target: str | None) -> None:
+    inst = registry.resolve_one(target)
+    ui.info(f"Opening browser for '{inst.name}'...")
+    subprocess.run([python_run_cmd(), "main.py", "browser"], cwd=inst.path)
+
+
+def cmd_debug(target: str | None) -> None:
+    inst = registry.resolve_one(target)
+    if not process.is_running(inst.pid_file):
+        ui.error(f"'{inst.name}' is not running. Start it first with: silicon start {inst.name}")
+        sys.exit(1)
+    log_file = Path(inst.path) / ".silicon.log"
+    if not log_file.exists():
+        ui.error(f"No log file found at {log_file}")
+        sys.exit(1)
+    pid = process.get_pid(inst.pid_file)
+    print(f"\n{ui.BOLD}{ui.CYAN}Debugging '{inst.name}'{ui.RESET} (PID {pid})")
+    print(f"{ui.DIM}  Log: {log_file}{ui.RESET}")
+    print(f"{ui.DIM}  Press Ctrl+C to detach{ui.RESET}\n")
+    try:
+        subprocess.run(["tail", "-f", str(log_file)])
+    except KeyboardInterrupt:
+        pass
+
+
+def cmd_attach(target_dir: str | None) -> None:
+    target = Path(target_dir or ".").resolve()
+    if not (target / "main.py").exists() or not (target / "config.py").exists():
+        ui.error("This doesn't look like a silicon directory.")
+        ui.info(f"Expected main.py and config.py in: {target}")
+        ui.info("  silicon attach /path/to/silicon")
+        sys.exit(1)
+    if not (target / "prompts").is_dir() or not (target / "core").is_dir():
+        ui.error("Missing prompts/ or core/ directory. Not a valid silicon.")
+        sys.exit(1)
+
+    for i in registry.installs():
+        if i.path == str(target):
+            ui.warn(f"This silicon is already registered as '{i.name}'")
+            return
+
+    ui.success(f"Found a silicon at: {target}")
+    name = ui.ask("Instance name", target.name)
+    if registry.name_taken(name):
+        ui.error(f"Name '{name}' is already taken. Pick a different one.")
+        sys.exit(1)
+
+    pid_file = target / ".silicon.pid"
+    running = process.is_running(str(pid_file))
+    registry.register(name, str(target), str(pid_file))
+    ui.success(f"Attached '{name}' at {target}")
+    if running:
+        print(f"\n  {ui.BOLD}{name}{ui.RESET} {ui.GREEN}● running{ui.RESET} (PID {process.get_pid(str(pid_file))})\n")
+    else:
+        print(f"\n  {ui.BOLD}{name}{ui.RESET} {ui.DIM}○ stopped{ui.RESET}")
+        print(f"  Start it with: {ui.BOLD}silicon start {name}{ui.RESET}\n")
+
+
+def cmd_agent(subcmd: str | None, target: str | None) -> None:
+    if not subcmd:
+        ui.error("Usage: silicon agent <start|stop|status> [name]")
+        sys.exit(1)
+    inst = registry.resolve_one(target)
+    if subcmd == "start":
+        glassagent.start(inst.path)
+    elif subcmd == "stop":
+        glassagent.stop(inst.path)
+    elif subcmd == "status":
+        if glassagent.status(inst.path):
+            pid = (Path(inst.path) / ".glass_agent.pid").read_text().strip()
+            print(f"{ui.GREEN}●{ui.RESET} Glass agent running (PID {pid})")
+        else:
+            print(f"{ui.DIM}○{ui.RESET} Glass agent stopped")
+    else:
+        ui.error(f"Unknown agent command: {subcmd}. Use start, stop, or status.")
+        sys.exit(1)
+
+
+def cmd_new(target: str | None) -> None:
+    if target:
+        stemcell.hydrate(target)
+        return
+    # No target: ask for a folder to create (Python-native installer).
+    name = ui.ask("New silicon folder name", "silicon")
+    if not name:
+        ui.error("A folder name is required.")
+        sys.exit(1)
+    stemcell.hydrate(str(Path.cwd() / name))
+
+
+def cmd_help() -> None:
+    print(f"""
+{ui.BOLD}{ui.CYAN}silicon{ui.RESET} – manage your silicon instances
+
+{ui.BOLD}Usage:{ui.RESET}
+  silicon                     Show status or list instances
+  silicon new [dir]           Create a new Silicon (hydrate from stemcell)
+  silicon new .               Hydrate the current folder into a runnable silicon
+  silicon start <target>      Start silicon(s). target = name, index, 1,2,4, or all
+  silicon stop <target>       Stop silicon(s) (agent stays alive)
+  silicon stop --full <target> Stop silicon(s) and glass agent
+  silicon restart <target>    Restart silicon(s)
+  silicon agent <start|stop|status> [name]  Manage glass agent
+  silicon status [name]       Show instance status
+  silicon browser [name]      Open headed browser for login
+  silicon debug [name]        Attach to running instance (live logs)
+  silicon attach [path]       Register an existing silicon instance
+  silicon pull <username>     Pull a silicon from Glass into a new folder
+  silicon push [name]         Start hourly backup loop to Glass
+  silicon push [name] now     Push a one-time backup to Glass
+  silicon push [name] stop    Stop the hourly backup loop
+  silicon update <target>     Update silicon(s) to latest. target = name, index, 1,2,4, or all
+  silicon list                List all instances
+  silicon script update       Update the silicon CLI itself
+  silicon install             Install a new instance
+  silicon help                Show this help
+""")
+
+
+def suggest_command(inp: str) -> None:
+    def score(cmd: str) -> int:
+        ld = abs(len(inp) - len(cmd))
+        if cmd.startswith(inp) or inp.startswith(cmd):
+            return ld
+        common = sum(1 for a, b in zip(inp, cmd) if a == b)
+        return max(len(cmd), len(inp)) - common + ld
+    best = min(COMMANDS + ["ls"], key=score)
+    if score(best) <= 3:
+        print(f"\n{ui.YELLOW}Did you mean?{ui.RESET}\n  silicon {best}\n")
+
+
+# ----------------------------------------------------------------- dispatch
+def main(argv: list[str] | None = None) -> None:
+    argv = argv if argv is not None else sys.argv[1:]
+    cmd = argv[0] if argv else ""
+    a1 = argv[1] if len(argv) > 1 else None
+    a2 = argv[2] if len(argv) > 2 else None
+
+    if cmd == "_watchdog":  # internal: the supervised auto-restart loop
+        process.watchdog_loop(name=a2 or "silicon", path=a1, pid_file=argv[3] if len(argv) > 3 else "")
+        return
+
+    if cmd == "start":
+        process.start(a1)
+    elif cmd == "stop":
+        if a1 == "--full":
+            process.stop(a2, full=True)
+        else:
+            process.stop(a1, full=(a2 == "--full"))
+    elif cmd == "restart":
+        process.restart(a1)
+    elif cmd == "status":
+        cmd_status(a1)
+    elif cmd == "browser":
+        cmd_browser(a1)
+    elif cmd == "debug":
+        cmd_debug(a1)
+    elif cmd == "attach":
+        cmd_attach(a1)
+    elif cmd == "pull":
+        sync.pull(a1)
+    elif cmd == "push":
+        sync.push(a1, a2)
+    elif cmd == "update":
+        update.update_instance(a1)
+    elif cmd in ("list", "ls"):
+        cmd_list()
+    elif cmd == "agent":
+        cmd_agent(a1, a2)
+    elif cmd == "script":
+        if a1 == "update":
+            update.update_cli()
+        else:
+            ui.error(f"Unknown script command: {a1}. Did you mean: silicon script update?")
+            sys.exit(1)
+    elif cmd == "new":
+        cmd_new(a1)
+    elif cmd == "install":
+        cmd_new(None)
+    elif cmd in ("help", "-h", "--help"):
+        cmd_help()
+    elif cmd == "":
+        cmd_status(None)
+    else:
+        ui.error(f"Unknown command: {cmd}")
+        suggest_command(cmd)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

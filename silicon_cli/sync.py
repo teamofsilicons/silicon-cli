@@ -14,11 +14,17 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
 from . import registry, stemcell, ui
 from .config import GLASS_CLI_REPO, GLASS_SERVER_URL
+
+MANIFEST_NAME = ".backupsilicon"
+BACKUP_UPLOAD_PATH = "/api/v1/silicon-backups/"
+BACKUP_INTERVAL_SECS = 60 * 60
 
 
 def _has_glass() -> bool:
@@ -84,6 +90,152 @@ def _post_json(url: str, payload: dict) -> tuple[int, dict]:
             return e.code, {}
     except Exception as e:
         return 0, {"error": str(e)}
+
+
+def _manifest_path(path: str) -> Path:
+    return Path(path) / MANIFEST_NAME
+
+
+def _read_manifest(path: str) -> list[str]:
+    manifest = _manifest_path(path)
+    if not manifest.exists():
+        return []
+    patterns = []
+    for line in manifest.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            patterns.append(line)
+    return patterns
+
+
+def _resolve_manifest_path(root: Path, pattern: str) -> list[Path]:
+    import glob
+
+    raw = Path(os.path.expanduser(pattern))
+    if not raw.is_absolute():
+        raw = root / raw
+    return [Path(p).resolve() for p in glob.glob(str(raw), recursive=True)]
+
+
+def _build_manifest_archive(path: str) -> tuple[bytes, list[str]]:
+    root = Path(path).resolve()
+    resolved = []
+    for pattern in _read_manifest(path):
+        resolved.extend(_resolve_manifest_path(root, pattern))
+
+    existing = sorted({p for p in resolved if p.exists()}, key=lambda p: str(p))
+    dirs = [p for p in existing if p.is_dir()]
+    top = [
+        p
+        for p in existing
+        if not any(p != d and str(p).startswith(str(d) + os.sep) for d in dirs)
+    ]
+
+    archive = tempfile.NamedTemporaryFile(prefix="silicon-backup-", suffix=".tar.gz", delete=False)
+    archive.close()
+    included: list[str] = []
+    try:
+        with tarfile.open(archive.name, "w:gz") as tf:
+            for item in top:
+                arcname = item.relative_to(root).as_posix() if item.is_relative_to(root) else item.name
+                try:
+                    tf.add(item, arcname=arcname)
+                    included.append(arcname)
+                except Exception:
+                    pass
+        data = Path(archive.name).read_bytes()
+    finally:
+        Path(archive.name).unlink(missing_ok=True)
+    return data, included
+
+
+def _multipart(fields: dict[str, str], file_field: str, filename: str, content_type: str, data: bytes) -> tuple[bytes, str]:
+    boundary = f"silicon-{uuid_hex()}"
+    chunks: list[bytes] = []
+    for name, value in fields.items():
+        chunks.extend([
+            f"--{boundary}\r\n".encode(),
+            f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode(),
+            str(value).encode(),
+            b"\r\n",
+        ])
+    chunks.extend([
+        f"--{boundary}\r\n".encode(),
+        f'Content-Disposition: form-data; name="{file_field}"; filename="{filename}"\r\n'.encode(),
+        f"Content-Type: {content_type}\r\n\r\n".encode(),
+        data,
+        b"\r\n",
+        f"--{boundary}--\r\n".encode(),
+    ])
+    return b"".join(chunks), boundary
+
+
+def uuid_hex() -> str:
+    import uuid
+
+    return uuid.uuid4().hex
+
+
+def _glass_config(path: str) -> dict:
+    cfg = Path(path) / ".glass.json"
+    if not cfg.exists():
+        raise FileNotFoundError("No .glass.json found.")
+    return json.loads(cfg.read_text())
+
+
+def _manifest_backup_now(path: str, note: str = "manual") -> bool:
+    patterns = _read_manifest(path)
+    if not patterns:
+        ui.warn("No .backupsilicon manifest found. Nothing to back up.")
+        return False
+
+    data, included = _build_manifest_archive(path)
+    if not included:
+        ui.warn(".backupsilicon matched no files.")
+        return False
+
+    cfg = _glass_config(path)
+    api_key = cfg.get("api_key") or cfg.get("silicon_api_key") or ""
+    if not api_key:
+        ui.error(".glass.json does not contain api_key.")
+        return False
+
+    server = (cfg.get("server_url") or GLASS_SERVER_URL).rstrip("/")
+    body, boundary = _multipart(
+        {"manifest": json.dumps(included), "note": note},
+        "file",
+        "backup.tar.gz",
+        "application/gzip",
+        data,
+    )
+    req = urllib.request.Request(
+        server + BACKUP_UPLOAD_PATH,
+        data=body,
+        headers={
+            "X-Silicon-Key": api_key,
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            payload = json.loads(resp.read().decode() or "{}")
+            ui.success(f"Backup uploaded v{payload.get('seq', '?')} ({len(included)} paths).")
+            return True
+    except urllib.error.HTTPError as e:
+        msg = e.read().decode(errors="replace")[:200]
+        ui.error(f"Backup upload failed HTTP {e.code}: {msg}")
+    except Exception as e:
+        ui.error(f"Backup upload failed: {e}")
+    return False
+
+
+def backup_loop(path: str, name: str | None = None) -> None:
+    label = name or Path(path).name
+    while True:
+        ui.info(f"Running scheduled backup for '{label}'...")
+        _manifest_backup_now(path, note="scheduled")
+        time.sleep(BACKUP_INTERVAL_SECS)
 
 
 def pull(username: str | None) -> None:
@@ -173,8 +325,12 @@ def pull(username: str | None) -> None:
 def _start_backup_loop(path: str, name: str) -> None:
     ui.info("Starting hourly backup loop in background...")
     log = open(Path(path) / ".glass-push.log", "a")
-    proc = subprocess.Popen(["glass", "push"], cwd=path, stdout=log, stderr=subprocess.STDOUT,
-                            start_new_session=True)
+    if _manifest_path(path).exists():
+        cmd = [sys.executable, "-m", "silicon_cli.cli", "_backup_loop", path, name]
+        proc = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    else:
+        proc = subprocess.Popen(["glass", "push"], cwd=path, stdout=log, stderr=subprocess.STDOUT,
+                                start_new_session=True)
     (Path(path) / ".glass-push.pid").write_text(str(proc.pid))
     ui.success(f"Hourly backups running (PID {proc.pid}). Logs: {path}/.glass-push.log")
     ui.info(f"Use 'silicon push {name} now' for a manual backup anytime.")
@@ -190,7 +346,10 @@ def push(target: str | None, subcmd: str | None) -> None:
 
     if subcmd == "now":
         ui.info(f"Pushing '{inst.name}' to Glass...")
-        ok = subprocess.run(["glass", "push", "now"], cwd=inst.path).returncode == 0
+        if _manifest_path(inst.path).exists():
+            ok = _manifest_backup_now(inst.path, note="manual")
+        else:
+            ok = subprocess.run(["glass", "push", "now"], cwd=inst.path).returncode == 0
         ui.success("Backup complete.") if ok else ui.error("Push failed.")
     elif subcmd == "stop":
         try:

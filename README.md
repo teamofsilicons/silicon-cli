@@ -1,7 +1,10 @@
-# silicon-cli
+# silicon-manager
 
-Our own **`silicon`** CLI — a Python (pip-installable) port of the original bash
-silicon manager. Manages silicon instances on a machine: create them from the
+This is the single source for the installable **`silicon`** command. The PyPI
+package is still named `silicon-cli`, but the code lives here in
+`silicon-manager` so it is not confused with a runnable Silicon instance tree.
+
+The command manages silicon instances on a machine: create them from the
 [silicon-stemcell](https://github.com/unlikefraction/silicon-stemcell) base,
 start/stop them under an auto-restart watchdog, stream logs, and back them up to
 Glass. It reads the same `~/.silicon/registry.json`, so existing installs carry
@@ -31,6 +34,7 @@ silicon debug [name]         Tail a running instance's logs
 silicon attach [path]        Register an existing silicon directory
 silicon pull <username>      Pull a silicon from Glass into a new folder
 silicon push [name] [now|stop]   Hourly backups to Glass (now = one-shot, stop = end loop)
+silicon backup [name] [now|stop] Alias for silicon push
 silicon update <target>      Update silicon(s) from the latest stemcell
 silicon list                 List all instances
 silicon script update        Update this CLI itself
@@ -46,6 +50,14 @@ silicon help                 Show help
 | `SILICON_STEMCELL_REPO` | `unlikefraction/silicon-stemcell` | base for `new` |
 | `SILICON_GLASS_CLI_REPO` | `unlikefraction/glass` | glass backup CLI |
 | `SILICON_PYTHON` | `python3` | interpreter used to run a silicon's `main.py` |
+
+## Backups
+
+`silicon push <name> now` and `silicon backup <name> now` use the
+`.backupsilicon` manifest when the instance has one. The CLI archives those
+paths and uploads them to Glass via `/api/v1/silicon-backups/` with the
+instance's `.glass.json` API key. If no manifest exists, the command falls back
+to the legacy `glass push` snapshot flow.
 
 ## How it differs from the bash version
 

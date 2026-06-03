@@ -9,7 +9,7 @@ from . import glassagent, process, registry, stemcell, sync, ui, update
 from .config import python_run_cmd
 
 COMMANDS = ["start", "stop", "restart", "status", "browser", "debug", "attach",
-            "pull", "push", "update", "list", "install", "new", "help", "script", "agent"]
+            "pull", "push", "backup", "update", "list", "install", "new", "help", "script", "agent"]
 
 
 # ----------------------------------------------------------------- commands
@@ -168,6 +168,7 @@ def cmd_help() -> None:
   silicon push [name]         Start hourly backup loop to Glass
   silicon push [name] now     Push a one-time backup to Glass
   silicon push [name] stop    Stop the hourly backup loop
+  silicon backup [name] [now|stop] Alias for silicon push
   silicon update <target>     Update silicon(s) to latest. target = name, index, 1,2,4, or all
   silicon list                List all instances
   silicon script update       Update the silicon CLI itself
@@ -199,6 +200,10 @@ def main(argv: list[str] | None = None) -> None:
         process.watchdog_loop(name=a2 or "silicon", path=a1, pid_file=argv[3] if len(argv) > 3 else "")
         return
 
+    if cmd == "_backup_loop":  # internal: the scheduled manifest backup loop
+        sync.backup_loop(a1 or ".", a2)
+        return
+
     if cmd == "start":
         process.start(a1)
     elif cmd == "stop":
@@ -218,7 +223,7 @@ def main(argv: list[str] | None = None) -> None:
         cmd_attach(a1)
     elif cmd == "pull":
         sync.pull(a1)
-    elif cmd == "push":
+    elif cmd in ("push", "backup"):
         sync.push(a1, a2)
     elif cmd == "update":
         update.update_instance(a1)

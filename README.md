@@ -1,8 +1,8 @@
-# silicon-manager
+# silicon-cli
 
 This is the single source for the installable **`silicon`** command. The PyPI
-package is still named `silicon-cli`, but the code lives here in
-`silicon-manager` so it is not confused with a runnable Silicon instance tree.
+package is named `silicon-cli`, and the code lives here in this `silicon-cli`
+repo.
 
 The command manages silicon instances on a machine: create them from the
 [silicon-stemcell](https://github.com/unlikefraction/silicon-stemcell) base,

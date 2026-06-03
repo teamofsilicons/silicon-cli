@@ -70,7 +70,7 @@ def update_cli() -> None:
     source = CLI_SOURCE_FILE.read_text().strip() if CLI_SOURCE_FILE.exists() else ""
     if not source:
         ui.warn("No install source recorded. Reinstall manually:")
-        ui.info("  pip install --upgrade <path-or-git-url-to-silicon-manager>")
+        ui.info("  pip install --upgrade <path-or-git-url-to-silicon-cli>")
         return
     r = subprocess.run([sys.executable, "-m", "pip", "install", "--upgrade", source])
     if r.returncode == 0:

@@ -33,7 +33,7 @@ silicon browser [name]       Open a headed browser for login
 silicon debug [name]         Tail a running instance's logs
 silicon attach [path]        Register an existing silicon directory
 silicon pull <username>      Pull a silicon from Glass into a new folder
-silicon push [name] [now|stop]   Hourly backups to Glass (now = one-shot, stop = end loop)
+silicon push [name] [now|stop]   Daily 23:59 GMT backups to Glass (now = one-shot, stop = end loop)
 silicon backup [name] [now|stop] Alias for silicon push
 silicon update <target>      Update silicon(s) from the latest stemcell
 silicon list                 List all instances
@@ -82,6 +82,9 @@ SILICON_INTERFACE_CLI_SOURCE=../silicon-interface/packages/silicon-interface-cli
 paths and uploads them to Glass via `/api/v1/silicon-backups/` with the
 instance's `.glass.json` API key. If no manifest exists, the command falls back
 to the legacy `glass push` snapshot flow.
+
+`silicon push <name>` starts the background loop. Scheduled manifest backups run
+daily at 23:59 GMT; `now` remains available for one-shot manual backups.
 
 ## How it differs from the bash version
 

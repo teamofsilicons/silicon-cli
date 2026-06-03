@@ -17,6 +17,7 @@ import tempfile
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import interface_cli, registry, stemcell, ui
@@ -24,7 +25,8 @@ from .config import GLASS_CLI_REPO, GLASS_SERVER_URL
 
 MANIFEST_NAME = ".backupsilicon"
 BACKUP_UPLOAD_PATH = "/api/v1/silicon-backups/"
-BACKUP_INTERVAL_SECS = 60 * 60
+BACKUP_HOUR_UTC = 23
+BACKUP_MINUTE_UTC = 59
 
 
 def _has_glass() -> bool:
@@ -233,9 +235,24 @@ def _manifest_backup_now(path: str, note: str = "manual") -> bool:
 def backup_loop(path: str, name: str | None = None) -> None:
     label = name or Path(path).name
     while True:
+        wait = _seconds_until_next_backup()
+        ui.info(f"Next scheduled backup for '{label}' at 23:59 GMT.")
+        time.sleep(wait)
         ui.info(f"Running scheduled backup for '{label}'...")
         _manifest_backup_now(path, note="scheduled")
-        time.sleep(BACKUP_INTERVAL_SECS)
+
+
+def _seconds_until_next_backup(now: datetime | None = None) -> float:
+    now = now or datetime.now(timezone.utc)
+    target = now.replace(
+        hour=BACKUP_HOUR_UTC,
+        minute=BACKUP_MINUTE_UTC,
+        second=0,
+        microsecond=0,
+    )
+    if target <= now:
+        target += timedelta(days=1)
+    return max(1.0, (target - now).total_seconds())
 
 
 def pull(username: str | None) -> None:
@@ -328,7 +345,7 @@ def pull(username: str | None) -> None:
 
 
 def _start_backup_loop(path: str, name: str) -> None:
-    ui.info("Starting hourly backup loop in background...")
+    ui.info("Starting daily 23:59 GMT backup loop in background...")
     log = open(Path(path) / ".glass-push.log", "a")
     if _manifest_path(path).exists():
         cmd = [sys.executable, "-m", "silicon_cli.cli", "_backup_loop", path, name]
@@ -337,7 +354,7 @@ def _start_backup_loop(path: str, name: str) -> None:
         proc = subprocess.Popen(["glass", "push"], cwd=path, stdout=log, stderr=subprocess.STDOUT,
                                 start_new_session=True)
     (Path(path) / ".glass-push.pid").write_text(str(proc.pid))
-    ui.success(f"Hourly backups running (PID {proc.pid}). Logs: {path}/.glass-push.log")
+    ui.success(f"Daily backups running (PID {proc.pid}). Logs: {path}/.glass-push.log")
     ui.info(f"Use 'silicon push {name} now' for a manual backup anytime.")
 
 
@@ -375,6 +392,6 @@ def push(target: str | None, subcmd: str | None) -> None:
                 return
             except Exception:
                 pass
-        ui.info(f"Starting hourly backup loop for '{inst.name}'...")
+        ui.info(f"Starting daily 23:59 GMT backup loop for '{inst.name}'...")
         subprocess.run(["glass", "push", "now"], cwd=inst.path)
         _start_backup_loop(inst.path, inst.name)

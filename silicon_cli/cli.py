@@ -165,9 +165,9 @@ def cmd_help() -> None:
   silicon debug [name]        Attach to running instance (live logs)
   silicon attach [path]       Register an existing silicon instance
   silicon pull <username>     Pull a silicon from Glass into a new folder
-  silicon push [name]         Start hourly backup loop to Glass
+  silicon push [name]         Start daily 23:59 GMT backup loop to Glass
   silicon push [name] now     Push a one-time backup to Glass
-  silicon push [name] stop    Stop the hourly backup loop
+  silicon push [name] stop    Stop the daily backup loop
   silicon backup [name] [now|stop] Alias for silicon push
   silicon update <target>     Update silicon(s) to latest. target = name, index, 1,2,4, or all
   silicon list                List all instances

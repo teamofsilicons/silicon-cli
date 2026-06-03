@@ -23,6 +23,17 @@ STEMCELL_ZIP_URL = f"https://github.com/{STEMCELL_REPO}/archive/refs/heads/main.
 # Glass CLI (used by pull/push for backups).
 GLASS_CLI_REPO = os.environ.get("SILICON_GLASS_CLI_REPO", "unlikefraction/glass")
 
+# Silicon Interface CLI. During local development, silicon-cli will auto-detect
+# a sibling silicon-interface checkout; in production this package spec is used.
+SILICON_INTERFACE_CLI_PACKAGE = os.environ.get(
+    "SILICON_INTERFACE_CLI_PACKAGE",
+    "@teamofsilicons/silicon-interface-cli",
+)
+SILICON_INTERFACE_CLI_SOURCE = os.environ.get("SILICON_INTERFACE_CLI_SOURCE", "")
+SILICON_INTERFACE_CLI_SKIP = os.environ.get("SILICON_INTERFACE_CLI_SKIP", "").lower() in {
+    "1", "true", "yes", "on",
+}
+
 
 def python_run_cmd() -> str:
     """The interpreter used to RUN a silicon's main.py (not this CLI's venv)."""

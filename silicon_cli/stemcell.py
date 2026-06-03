@@ -16,7 +16,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import registry, ui
+from . import interface_cli, registry, ui
 from .config import STEMCELL_GIT_URL, STEMCELL_ZIP_URL, python_run_cmd
 
 SKIP_NAMES = {".git", "__pycache__", ".DS_Store"}
@@ -169,6 +169,7 @@ def hydrate(target: str) -> None:
                 subprocess.run([python_run_cmd(), "-m", "pip", "install", "-r", str(req), "--quiet", "--user"])
 
         registry.register(name, abs_target)
+        interface_cli.setup(abs_target)
         ui.success(f"Hydrated '{name}' at {abs_target}")
         ui.info(f"Run 'silicon start {name}' when you're ready.")
     finally:

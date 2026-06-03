@@ -50,6 +50,30 @@ silicon help                 Show help
 | `SILICON_STEMCELL_REPO` | `unlikefraction/silicon-stemcell` | base for `new` |
 | `SILICON_GLASS_CLI_REPO` | `unlikefraction/glass` | glass backup CLI |
 | `SILICON_PYTHON` | `python3` | interpreter used to run a silicon's `main.py` |
+| `SILICON_INTERFACE_CLI_PACKAGE` | `@teamofsilicons/silicon-interface-cli` | npm package used to install the Silicon Interface CLI |
+| `SILICON_INTERFACE_CLI_SOURCE` | *(empty)* | local package dir or `silicon-interface.mjs` path for dev installs |
+| `SILICON_INTERFACE_CLI_SKIP` | *(empty)* | set to `1` to skip interface CLI setup |
+
+## Silicon Interface CLI
+
+`silicon new`, `silicon install`, and `silicon pull` also set up the
+Silicon Interface CLI in the silicon folder when Node 22+ is available.
+
+The local wrappers are written to:
+
+```bash
+<silicon>/.silicon-interface/bin/si
+<silicon>/.silicon-interface/bin/silicon-interface
+```
+
+For Glass-pulled silicons, those wrappers automatically use the folder's
+`.glass.json` (`server_url` + `api_key`) for conversation API auth.
+
+During local development, point `SILICON_INTERFACE_CLI_SOURCE` at the package:
+
+```bash
+SILICON_INTERFACE_CLI_SOURCE=../silicon-interface/packages/silicon-interface-cli silicon new ./ada
+```
 
 ## Backups
 

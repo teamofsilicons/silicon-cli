@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import registry, stemcell, ui
+from . import interface_cli, registry, stemcell, ui
 from .config import GLASS_CLI_REPO, GLASS_SERVER_URL
 
 MANIFEST_NAME = ".backupsilicon"
@@ -307,10 +307,15 @@ def pull(username: str | None) -> None:
     real = [f for f in target.iterdir()
             if not (f.name.startswith(".") and f.name != ".glass.json")
             and f.name != "__pycache__" and f.name not in bare]
+    populated = False
     if not real and ui.interactive():
         ui.warn("This looks like an empty repository (only silicon.json and env.py).")
         if ui.confirm("Do you want to populate it with Silicon?"):
             stemcell.hydrate(str(target))
+            populated = True
+
+    if not populated:
+        interface_cli.setup(target)
 
     if ui.interactive() and ui.confirm("Do you want to enable backups for this silicon?"):
         ensure_glass_cli()

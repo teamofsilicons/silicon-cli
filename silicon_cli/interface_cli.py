@@ -12,6 +12,7 @@ from .config import (
     SILICON_INTERFACE_CLI_PACKAGE,
     SILICON_INTERFACE_CLI_SKIP,
     SILICON_INTERFACE_CLI_SOURCE,
+    SILICON_INTERFACE_CLI_TARBALL,
 )
 
 
@@ -55,7 +56,7 @@ def _source_script() -> Path | None:
     return candidate if candidate.exists() else None
 
 
-def _run(cmd: list[str], target: Path) -> bool:
+def _run(cmd: list[str], target: Path, *, warn: bool = True) -> bool:
     try:
         proc = subprocess.run(
             cmd,
@@ -66,17 +67,20 @@ def _run(cmd: list[str], target: Path) -> bool:
             check=False,
         )
     except Exception as exc:
-        ui.warn(f"Silicon Interface CLI setup skipped: {exc}")
+        if warn:
+            ui.warn(f"Silicon Interface CLI setup skipped: {exc}")
         return False
     if proc.returncode == 0:
         return True
+    if not warn:
+        return False
     detail = (proc.stderr or proc.stdout or "").strip().splitlines()
     suffix = f": {detail[-1]}" if detail else ""
     ui.warn(f"Silicon Interface CLI setup skipped{suffix}")
     return False
 
 
-def _npm_install_command(target: Path) -> list[str] | None:
+def _npm_install_command(target: Path, package_spec: str) -> list[str] | None:
     npm = shutil.which("npm")
     if not npm:
         return None
@@ -85,12 +89,28 @@ def _npm_install_command(target: Path) -> list[str] | None:
         "exec",
         "--yes",
         "--package",
-        SILICON_INTERFACE_CLI_PACKAGE,
+        package_spec,
         "--",
         "silicon-interface",
         "install",
         str(target),
     ]
+
+
+def _npm_install_commands(target: Path) -> list[list[str]]:
+    package_specs = [SILICON_INTERFACE_CLI_PACKAGE]
+    if (
+        SILICON_INTERFACE_CLI_TARBALL
+        and SILICON_INTERFACE_CLI_TARBALL not in package_specs
+    ):
+        package_specs.append(SILICON_INTERFACE_CLI_TARBALL)
+
+    commands: list[list[str]] = []
+    for package_spec in package_specs:
+        cmd = _npm_install_command(target, package_spec)
+        if cmd:
+            commands.append(cmd)
+    return commands
 
 
 def setup(target: str | Path) -> bool:
@@ -120,11 +140,21 @@ def setup(target: str | Path) -> bool:
     if script:
         ok = _run([shutil.which("node") or "node", str(script), "install", str(target_path)], target_path)
     else:
-        cmd = _npm_install_command(target_path)
-        if not cmd:
+        commands = _npm_install_commands(target_path)
+        if not commands:
             ui.warn("Silicon Interface CLI setup skipped: npm not found.")
             return False
-        ok = _run(cmd, target_path)
+        ok = False
+        for index, cmd in enumerate(commands):
+            final_attempt = index == len(commands) - 1
+            ok = _run(cmd, target_path, warn=final_attempt)
+            if ok:
+                break
+            if not final_attempt:
+                ui.warn(
+                    "Silicon Interface CLI package lookup failed; "
+                    "retrying with published tarball."
+                )
 
     if ok:
         ui.success(

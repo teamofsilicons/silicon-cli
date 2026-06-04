@@ -31,10 +31,13 @@ SILICON_INTERFACE_CLI_PACKAGE = os.environ.get(
 )
 SILICON_INTERFACE_CLI_TARBALL = os.environ.get(
     "SILICON_INTERFACE_CLI_TARBALL",
-    "https://registry.npmjs.org/@teamofsilicons/silicon-interface-cli/-/silicon-interface-cli-0.1.1.tgz",
+    "https://registry.npmjs.org/@teamofsilicons/silicon-interface-cli/-/silicon-interface-cli-0.1.2.tgz",
 )
 SILICON_INTERFACE_CLI_SOURCE = os.environ.get("SILICON_INTERFACE_CLI_SOURCE", "")
 SILICON_INTERFACE_CLI_SKIP = os.environ.get("SILICON_INTERFACE_CLI_SKIP", "").lower() in {
+    "1", "true", "yes", "on",
+}
+SILICON_INTERFACE_DAEMON_SKIP = os.environ.get("SILICON_INTERFACE_DAEMON_SKIP", "").lower() in {
     "1", "true", "yes", "on",
 }
 

@@ -54,17 +54,22 @@ silicon help                 Show help
 | `SILICON_INTERFACE_CLI_TARBALL` | versioned npm tarball | fallback package URL if registry metadata is briefly unavailable |
 | `SILICON_INTERFACE_CLI_SOURCE` | *(empty)* | local package dir or `silicon-interface.mjs` path for dev installs |
 | `SILICON_INTERFACE_CLI_SKIP` | *(empty)* | set to `1` to skip interface CLI setup |
+| `SILICON_INTERFACE_DAEMON_SKIP` | *(empty)* | set to `1` to install the CLI without starting its listener daemon |
 
 ## Silicon Interface CLI
 
 `silicon new`, `silicon install`, and `silicon pull` also set up the
 Silicon Interface CLI in the silicon folder when Node 22+ is available.
+When a Glass `.glass.json` is present, setup also starts the background listener
+daemon so the silicon receives live conversation frames without polling.
 
 The local wrappers are written to:
 
 ```bash
 <silicon>/.silicon-interface/bin/si
 <silicon>/.silicon-interface/bin/silicon-interface
+<silicon>/.silicon-interface/inbox.jsonl
+<silicon>/.silicon-interface/state.json
 ```
 
 For Glass-pulled silicons, those wrappers automatically use the folder's

@@ -9,6 +9,7 @@ from pathlib import Path
 
 from . import ui
 from .config import (
+    SILICON_INTERFACE_DAEMON_SKIP,
     SILICON_INTERFACE_CLI_PACKAGE,
     SILICON_INTERFACE_CLI_SKIP,
     SILICON_INTERFACE_CLI_SOURCE,
@@ -113,6 +114,22 @@ def _npm_install_commands(target: Path) -> list[list[str]]:
     return commands
 
 
+def _start_daemon(target: Path) -> bool:
+    if SILICON_INTERFACE_DAEMON_SKIP:
+        return False
+    if not (target / ".glass.json").exists():
+        return False
+    si = target / ".silicon-interface" / "bin" / "si"
+    if not si.exists():
+        return False
+    ok = _run([str(si), "daemon", "start"], target, warn=False)
+    if ok:
+        ui.success("Silicon Interface daemon running.")
+    else:
+        ui.warn("Silicon Interface daemon was not started; run '.silicon-interface/bin/si daemon start'.")
+    return ok
+
+
 def setup(target: str | Path) -> bool:
     """Install local si/silicon-interface wrappers into ``target``.
 
@@ -161,4 +178,5 @@ def setup(target: str | Path) -> bool:
             "Silicon Interface CLI ready: "
             f"{target_path}/.silicon-interface/bin/si"
         )
+        _start_daemon(target_path)
     return ok

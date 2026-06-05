@@ -2,8 +2,8 @@
 
 `silicon new <dir>` downloads the stemcell, copies in any files the target is
 missing (never clobbering env.py / silicon.json / .glass.json), seeds config +
-env keys, prompts for tokens + brain/worker providers, installs requirements,
-and registers the instance — same flow as the original bash CLI.
+env keys, prompts for brain/worker providers, installs requirements, and
+registers the instance.
 """
 from __future__ import annotations
 
@@ -144,9 +144,9 @@ def hydrate(target: str) -> None:
         silicon.pop("version", None)
         sj.write_text(json.dumps(silicon, indent=4) + "\n")
 
-        # Seed env.py required keys
+        # Seed env.py required keys used by the current stemcell.
         env_path = dst / "env.py"
-        for key, default in {"TELEGRAM_BOT_TOKEN": "", "OPENAI_API_KEY": "", "GEMINI_API_KEY": "", "BROWSER_PROFILE": name}.items():
+        for key, default in {"GLASS_API_KEY": "", "BROWSER_PROFILE": name}.items():
             if not _env_value(env_path, key):
                 _env_upsert(env_path, key, default)
 
@@ -158,7 +158,7 @@ def hydrate(target: str) -> None:
 
         # Interactive setup
         if ui.interactive():
-            _interactive_setup(dst, env_path, sj, name)
+            _interactive_setup(sj)
 
         # Install dependencies
         req = dst / "requirements.txt"
@@ -176,31 +176,7 @@ def hydrate(target: str) -> None:
         shutil.rmtree(tmp_src, ignore_errors=True)
 
 
-def _interactive_setup(dst: Path, env_path: Path, sj: Path, name: str) -> None:
-    glass_connected = (dst / ".glass.json").exists()
-    if not glass_connected and not _env_value(env_path, "TELEGRAM_BOT_TOKEN"):
-        ui.info("You need a Telegram bot token to use Silicon.")
-        sys.stderr.write(f"{ui.DIM}  1. Open Telegram and search for @BotFather{ui.RESET}\n")
-        sys.stderr.write(f"{ui.DIM}  2. Send /newbot and follow the prompts{ui.RESET}\n")
-        sys.stderr.write(f"{ui.DIM}  3. Copy the token BotFather gives you{ui.RESET}\n")
-        token = ui.read_secret("Telegram bot token")
-        if not token:
-            ui.error("Telegram bot token is required.")
-            sys.exit(1)
-        _env_upsert(env_path, "TELEGRAM_BOT_TOKEN", token)
-
-    if not _env_value(env_path, "OPENAI_API_KEY"):
-        ui.info("OpenAI API key (for incoming voice transcription via Whisper). Enter to skip.")
-        v = ui.read_secret("OpenAI API key (optional)")
-        if v:
-            _env_upsert(env_path, "OPENAI_API_KEY", v)
-
-    if not _env_value(env_path, "GEMINI_API_KEY"):
-        ui.info("Gemini API key (for outgoing text-to-speech). Enter to skip.")
-        v = ui.read_secret("Gemini API key (optional)")
-        if v:
-            _env_upsert(env_path, "GEMINI_API_KEY", v)
-
+def _interactive_setup(sj: Path) -> None:
     # Brain / worker providers — only ask when both claude + codex are present
     brain = "claude"
     workers = {"browser": ["claude"], "terminal": ["claude"], "writer": ["claude"]}

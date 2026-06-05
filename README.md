@@ -78,6 +78,10 @@ The command validates the token with Glass, creates a folder named after the
 silicon, hydrates the stemcell, writes `.glass.json`, `.env`, and `env.py`,
 registers the instance, and starts the Silicon Interface daemon.
 
+Provider API keys for voice, browser profiles, billing, and architecture
+generation are configured on the Glass backend. A Glass-pulled silicon only
+stores its Glass API token locally.
+
 The local wrappers are written to:
 
 ```bash

@@ -9,7 +9,8 @@ from . import glassagent, process, registry, stemcell, sync, ui, update
 from .config import python_run_cmd
 
 COMMANDS = ["start", "stop", "restart", "status", "browser", "debug", "attach",
-            "pull", "push", "backup", "update", "list", "install", "new", "help", "script", "agent"]
+            "pull", "push", "backup", "update", "update-check", "check-update",
+            "list", "install", "new", "help", "script", "agent"]
 
 
 # ----------------------------------------------------------------- commands
@@ -170,6 +171,8 @@ def cmd_help() -> None:
   silicon push [name] stop    Stop the daily backup loop
   silicon backup [name] [now|stop] Alias for silicon push
   silicon update <target>     Update silicon(s) to latest. target = name, index, 1,2,4, or all
+  silicon update check [name] Trigger this silicon's system update check now
+  silicon update-check [name] Trigger this silicon's system update check now
   silicon list                List all instances
   silicon script update       Update the silicon CLI itself
   silicon install             Install a new instance
@@ -226,7 +229,12 @@ def main(argv: list[str] | None = None) -> None:
     elif cmd in ("push", "backup"):
         sync.push(a1, a2)
     elif cmd == "update":
-        update.update_instance(a1)
+        if a1 in ("check", "trigger"):
+            update.trigger_update_check(a2)
+        else:
+            update.update_instance(a1)
+    elif cmd in ("update-check", "check-update"):
+        update.trigger_update_check(a1)
     elif cmd in ("list", "ls"):
         cmd_list()
     elif cmd == "agent":

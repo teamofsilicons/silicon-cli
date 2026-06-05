@@ -8,7 +8,7 @@ import tempfile
 from pathlib import Path
 
 from . import process, registry, stemcell, ui
-from .config import CLI_SOURCE_FILE
+from .config import CLI_SOURCE_FILE, python_run_cmd
 
 
 def update_instance(target: str | None) -> None:
@@ -50,7 +50,6 @@ def _update_one(target: str | None, tmp_src: str, updater: str, multi: bool) -> 
         sys.exit(1)
 
     ui.info(f"Updating '{inst.name}' safely...")
-    from .config import python_run_cmd
     r = subprocess.run([python_run_cmd(), updater, "update", "--source", tmp_src, "--target", inst.path])
     if r.returncode == 0:
         ui.success(f"'{inst.name}' updated successfully")
@@ -77,4 +76,28 @@ def update_cli() -> None:
         ui.success("CLI updated to latest version")
     else:
         ui.error("CLI update failed.")
+        sys.exit(r.returncode)
+
+
+def trigger_update_check(target: str | None) -> None:
+    """Trigger the local stemcell's Glass system-version check now."""
+    inst = registry.resolve_one(target)
+    root = Path(inst.path)
+    updater = root / "update.py"
+    main_py = root / "main.py"
+
+    if updater.exists():
+        cmd = [python_run_cmd(), str(updater)]
+    elif main_py.exists():
+        cmd = [python_run_cmd(), "main.py", "update-check"]
+    else:
+        ui.error(f"'{inst.name}' does not look like a stemcell with update.py or main.py.")
+        sys.exit(1)
+
+    ui.info(f"Triggering system update check for '{inst.name}'...")
+    r = subprocess.run(cmd, cwd=inst.path)
+    if r.returncode == 0:
+        ui.success(f"Update check finished for '{inst.name}'")
+    else:
+        ui.error(f"Update check failed for '{inst.name}'.")
         sys.exit(r.returncode)

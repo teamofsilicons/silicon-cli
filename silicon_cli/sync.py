@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import ssl
 import subprocess
 import sys
 import tarfile
@@ -21,6 +22,19 @@ MANIFEST_NAME = ".backupsilicon"
 BACKUP_UPLOAD_PATH = "/api/v1/silicon-backups/"
 BACKUP_HOUR_UTC = 23
 BACKUP_MINUTE_UTC = 59
+
+
+def _ssl_context() -> ssl.SSLContext:
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+def _urlopen(req, *, timeout: int | None = None):
+    return urllib.request.urlopen(req, timeout=timeout, context=_ssl_context())
 
 
 def _has_glass() -> bool:
@@ -46,7 +60,8 @@ def install_glass_cli() -> None:
     try:
         ui.info("Installing glass CLI...")
         tarball = Path(tmp) / "glass.tar.gz"
-        urllib.request.urlretrieve(archive, tarball)
+        with _urlopen(archive, timeout=60) as resp, tarball.open("wb") as f:
+            shutil.copyfileobj(resp, f)
         with tarfile.open(tarball) as tf:
             tf.extractall(tmp)
         src = next((p for p in Path(tmp).iterdir() if p.is_dir() and p.name.startswith("glass-")), None)
@@ -167,7 +182,7 @@ def _get_json_with_silicon_key(url: str, api_key: str) -> tuple[int, dict]:
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with _urlopen(req, timeout=30) as resp:
             return resp.status, json.loads(resp.read().decode() or "{}")
     except urllib.error.HTTPError as e:
         try:
@@ -312,7 +327,7 @@ def _manifest_backup_now(path: str, note: str = "manual") -> bool:
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
+        with _urlopen(req, timeout=180) as resp:
             payload = json.loads(resp.read().decode() or "{}")
             ui.success(f"Backup uploaded v{payload.get('seq', '?')} ({len(included)} paths).")
             return True

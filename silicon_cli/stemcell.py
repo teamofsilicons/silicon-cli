@@ -2,7 +2,7 @@
 
 `silicon new <dir>` downloads the stemcell, copies in any files the target is
 missing (never clobbering env.py / silicon.json / .glass.json), seeds config +
-env keys, prompts for brain/worker providers, installs requirements, and
+env keys, prompts for the one brain provider order, installs requirements, and
 registers the instance.
 """
 from __future__ import annotations
@@ -82,11 +82,12 @@ def _provider_list(value, default):
     return out or default
 
 
-def _choose_provider_order(worker_type: str, default_choice: str = "claude") -> list[str]:
-    choice = ui.ask(f"Which provider should {worker_type} workers use – claude or codex?", default_choice)
-    if choice == "codex":
-        return ["codex", "claude"] if ui.confirm(f"Keep claude as fallback for {worker_type} workers?") else ["codex"]
-    return ["claude", "codex"] if ui.confirm(f"Keep codex as fallback for {worker_type} workers?") else ["claude"]
+def _choose_brain_order(primary: str) -> list[str]:
+    primary = "codex" if primary == "codex" else "claude"
+    fallback = "claude" if primary == "codex" else "codex"
+    if ui.confirm(f"Use {fallback} as fallback brain for all workers?", default_yes=True):
+        return [primary, fallback]
+    return [primary]
 
 
 def hydrate(target: str) -> None:
@@ -177,22 +178,20 @@ def hydrate(target: str) -> None:
 
 
 def _interactive_setup(sj: Path) -> None:
-    # Brain / worker providers — only ask when both claude + codex are present
+    # Brain provider order — one choice drives manager + every worker type.
     brain = "claude"
+    order = ["claude"]
     workers = {"browser": ["claude"], "terminal": ["claude"], "writer": ["claude"]}
     have_claude = bool(shutil.which("claude"))
     have_codex = bool(shutil.which("codex"))
     if have_claude and have_codex:
         ui.info("Detected both claude and codex.")
-        brain = "codex" if ui.ask("Which brain should Silicon use – claude or codex?", "claude") == "codex" else "claude"
-        # Each worker defaults to the chosen brain (matches the current stemcell CLI).
-        workers = {
-            "browser": _choose_provider_order("browser", brain),
-            "terminal": _choose_provider_order("terminal", brain),
-            "writer": _choose_provider_order("writer", brain),
-        }
+        brain = "codex" if ui.ask("Who do you want the brain to be – claude or codex?", "claude") == "codex" else "claude"
+        order = _choose_brain_order(brain)
+        workers = {"browser": order, "terminal": order, "writer": order}
     elif have_codex:
         brain = "codex"
+        order = ["codex"]
         workers = {"browser": ["codex"], "terminal": ["codex"], "writer": ["codex"]}
 
     try:
@@ -200,5 +199,6 @@ def _interactive_setup(sj: Path) -> None:
     except Exception:
         silicon = {}
     silicon["brain"] = brain
+    silicon["brain_order"] = order
     silicon["workers"] = {k: _provider_list(v, ["claude"]) for k, v in workers.items()}
     sj.write_text(json.dumps(silicon, indent=4) + "\n")

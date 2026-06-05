@@ -11,6 +11,7 @@ import tarfile
 import tempfile
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -22,6 +23,13 @@ MANIFEST_NAME = ".backupsilicon"
 BACKUP_UPLOAD_PATH = "/api/v1/silicon-backups/"
 BACKUP_HOUR_UTC = 23
 BACKUP_MINUTE_UTC = 59
+PROVIDER_API_KEYS = (
+    ("GEMINI_API_KEY", "Gemini API key"),
+    ("OPENAI_API_KEY", "OpenAI API key"),
+    ("ELEVENLABS_API_KEY", "ElevenLabs API key"),
+    ("DEEPGRAM_API_KEY", "Deepgram API key"),
+    ("STEEL_API_KEY", "Steel API key"),
+)
 
 
 def _ssl_context() -> ssl.SSLContext:
@@ -193,6 +201,67 @@ def _get_json_with_silicon_key(url: str, api_key: str) -> tuple[int, dict]:
         return 0, {"detail": str(e)}
 
 
+def _post_json_with_silicon_key(url: str, api_key: str, payload: dict) -> tuple[int, dict]:
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "X-Silicon-Key": api_key,
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "User-Agent": "silicon-cli",
+        },
+        method="POST",
+    )
+    try:
+        with _urlopen(req, timeout=30) as resp:
+            return resp.status, json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode() or "{}")
+        except Exception:
+            return e.code, {}
+    except Exception as e:
+        return 0, {"detail": str(e)}
+
+
+def _collect_team_api_keys() -> dict[str, str]:
+    if not ui.interactive():
+        return {}
+    ui.info("Provider API keys for this team. Leave blank to keep existing Glass/server values.")
+    keys: dict[str, str] = {}
+    for key_name, label in PROVIDER_API_KEYS:
+        value = ui.read_secret(label).strip()
+        if value:
+            keys[key_name] = value
+    return keys
+
+
+def _setup_team_api_keys(server: str, api_key: str, silicon: dict) -> None:
+    team_slug = str(
+        silicon.get("team")
+        or silicon.get("owner_team_slug")
+        or silicon.get("team_slug")
+        or ""
+    ).strip()
+    if not team_slug:
+        ui.warn("Glass did not return a team slug; provider API keys were not saved.")
+        return
+    keys = _collect_team_api_keys()
+    if not keys:
+        ui.info("No provider API keys entered; using existing Glass/server values.")
+        return
+    code, body = _post_json_with_silicon_key(
+        f"{server}/api/v1/teams/{urllib.parse.quote(team_slug)}/api-keys",
+        api_key,
+        {"keys": keys},
+    )
+    if 200 <= code < 300:
+        ui.success(f"Saved {len(keys)} provider key{'s' if len(keys) != 1 else ''} to Glass.")
+        return
+    ui.warn(body.get("detail") or body.get("error") or f"Could not save provider keys (HTTP {code}).")
+
+
 def _safe_instance_name(raw: str, fallback: str = "silicon") -> str:
     value = (raw or "").strip().lower()
     value = "".join(c if c.isalnum() or c in "._-" else "-" for c in value)
@@ -282,6 +351,7 @@ def _seed_glass_files(target: Path, *, server: str, api_key: str, silicon: dict,
         "workers",
         {"browser": ["claude"], "terminal": ["claude"], "writer": ["claude"]},
     )
+    config.setdefault("brain_order", [config.get("brain", "claude")])
     sj.write_text(json.dumps(config, indent=4) + "\n")
 
 
@@ -396,6 +466,7 @@ def pull(api_token: str | None) -> None:
             instance_name=instance_name,
         )
         stemcell.hydrate(str(target))
+        _setup_team_api_keys(server, api_key, silicon)
     except Exception:
         if target.exists() and not any(target.iterdir()):
             shutil.rmtree(target, ignore_errors=True)

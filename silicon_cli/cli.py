@@ -164,7 +164,7 @@ def cmd_help() -> None:
   silicon browser [name]      Open headed browser for login
   silicon debug [name]        Attach to running instance (live logs)
   silicon attach [path]       Register an existing silicon instance
-  silicon pull <username>     Pull a silicon from Glass into a new folder
+  silicon pull [api_token]    Pull a Glass silicon into a new local folder
   silicon push [name]         Start daily 23:59 GMT backup loop to Glass
   silicon push [name] now     Push a one-time backup to Glass
   silicon push [name] stop    Stop the daily backup loop

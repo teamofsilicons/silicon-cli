@@ -11,9 +11,8 @@ REGISTRY_DIR = Path(os.environ.get("SILICON_HOME", HOME / ".silicon"))
 REGISTRY_FILE = REGISTRY_DIR / "registry.json"
 CLI_SOURCE_FILE = REGISTRY_DIR / "cli-source"  # where `silicon script update` reinstalls from
 
-# Glass sync server (pull/push). Kept as the original default for compatibility;
-# override with GLASS_SERVER_URL to point at your own.
-GLASS_SERVER_URL = os.environ.get("GLASS_SERVER_URL", "https://glass.unlikefraction.com").rstrip("/")
+# Glass sync server (pull/push). Override with GLASS_SERVER_URL to point elsewhere.
+GLASS_SERVER_URL = os.environ.get("GLASS_SERVER_URL", "https://glass.teamofsilicons.com").rstrip("/")
 
 # Stemcell — the base every new silicon is hydrated from.
 STEMCELL_REPO = os.environ.get("SILICON_STEMCELL_REPO", "unlikefraction/silicon-stemcell")

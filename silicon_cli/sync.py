@@ -1,15 +1,9 @@
-"""Glass sync — pull a silicon from a Glass server and run backups (push).
-
-Faithful port of the bash `pull`/`push`. HTTP via stdlib urllib. Backups shell
-out to the `glass` CLI (auto-installed if missing), same as the original.
-"""
+"""Glass sync — pull a silicon from Glass and run backups."""
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import shutil
-import socket
 import subprocess
 import sys
 import tarfile
@@ -20,7 +14,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import interface_cli, registry, stemcell, ui
+from . import registry, stemcell, ui
 from .config import GLASS_CLI_REPO, GLASS_SERVER_URL
 
 MANIFEST_NAME = ".backupsilicon"
@@ -77,21 +71,6 @@ def install_glass_cli() -> None:
         ui.success("glass CLI installed") if _has_glass() else ui.warn("glass installed but not on PATH (add ~/.local/bin).")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
-
-
-def _post_json(url: str, payload: dict) -> tuple[int, dict]:
-    data = json.dumps(payload).encode()
-    req = urllib.request.Request(url, data=data, headers={"Content-Type": "application/json"})
-    try:
-        with urllib.request.urlopen(req) as resp:
-            return resp.status, json.loads(resp.read().decode() or "{}")
-    except urllib.error.HTTPError as e:
-        try:
-            return e.code, json.loads(e.read().decode() or "{}")
-        except Exception:
-            return e.code, {}
-    except Exception as e:
-        return 0, {"error": str(e)}
 
 
 def _manifest_path(path: str) -> Path:
@@ -178,6 +157,119 @@ def uuid_hex() -> str:
     return uuid.uuid4().hex
 
 
+def _get_json_with_silicon_key(url: str, api_key: str) -> tuple[int, dict]:
+    req = urllib.request.Request(
+        url,
+        headers={
+            "X-Silicon-Key": api_key,
+            "Accept": "application/json",
+            "User-Agent": "silicon-cli",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.status, json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode() or "{}")
+        except Exception:
+            return e.code, {}
+    except Exception as e:
+        return 0, {"detail": str(e)}
+
+
+def _safe_instance_name(raw: str, fallback: str = "silicon") -> str:
+    value = (raw or "").strip().lower()
+    value = "".join(c if c.isalnum() or c in "._-" else "-" for c in value)
+    value = "-".join(part for part in value.split("-") if part)
+    return value.strip("._-") or fallback
+
+
+def _choose_target(label: str, silicon_id: str) -> tuple[str, Path]:
+    name = label
+    if registry.name_taken(name):
+        suffix = silicon_id[-6:].lower() if silicon_id else uuid_hex()[:6]
+        name = f"{name}-{suffix}"
+
+    target = Path.cwd() / name
+    if not target.exists():
+        return name, target
+
+    if not ui.interactive():
+        ui.error(f"Target folder already exists: {target}")
+        sys.exit(1)
+
+    while target.exists():
+        name = ui.ask("Target folder name", f"{label}-{uuid_hex()[:6]}")
+        target = Path.cwd() / _safe_instance_name(name, "silicon")
+    return target.name, target
+
+
+def _write_dotenv(path: Path, values: dict[str, str]) -> None:
+    lines = []
+    existing = {}
+    if path.exists():
+        for raw in path.read_text().splitlines():
+            if "=" in raw and not raw.lstrip().startswith("#"):
+                key, value = raw.split("=", 1)
+                existing[key.strip()] = value.strip()
+            else:
+                lines.append(raw)
+    existing.update({k: v for k, v in values.items() if v is not None})
+    rendered = [line for line in lines if line.strip()]
+    rendered.extend(f"{key}={value}" for key, value in existing.items())
+    path.write_text("\n".join(rendered).rstrip() + "\n")
+
+
+def _seed_glass_files(target: Path, *, server: str, api_key: str, silicon: dict, instance_name: str) -> None:
+    silicon_id = str(silicon.get("silicon_id") or "").strip()
+    silicon_name = str(silicon.get("name") or instance_name).strip()
+    glass = {
+        "server_url": server,
+        "silicon_id": silicon_id,
+        "silicon_username": silicon_name,
+        "name": silicon_name,
+        "api_key": api_key,
+        "silicon_api_key": api_key,
+    }
+    target.mkdir(parents=True, exist_ok=True)
+    (target / ".glass.json").write_text(json.dumps(glass, indent=2) + "\n")
+    _write_dotenv(
+        target / ".env",
+        {
+            "GLASS_SERVER_URL": server,
+            "GLASS_API_KEY": api_key,
+            "SILICON_UPDATE_AUTH_KEY": api_key,
+            "SILICON_ID": silicon_id,
+            "SILICON_NAME": silicon_name,
+        },
+    )
+    stemcell._env_upsert(target / "env.py", "GLASS_API_KEY", api_key)
+
+    config = {}
+    sj = target / "silicon.json"
+    if sj.exists():
+        try:
+            config = json.loads(sj.read_text())
+        except json.JSONDecodeError:
+            config = {}
+    config.update(
+        {
+            "name": silicon_name,
+            "address": instance_name,
+            "silicon_id": silicon_id,
+            "glass": glass,
+        }
+    )
+    config.setdefault("run", "python main.py")
+    config.setdefault("brain", "claude")
+    config.setdefault(
+        "workers",
+        {"browser": ["claude"], "terminal": ["claude"], "writer": ["claude"]},
+    )
+    sj.write_text(json.dumps(config, indent=4) + "\n")
+
+
 def _glass_config(path: str) -> dict:
     cfg = Path(path) / ".glass.json"
     if not cfg.exists():
@@ -255,93 +347,55 @@ def _seconds_until_next_backup(now: datetime | None = None) -> float:
     return max(1.0, (target - now).total_seconds())
 
 
-def pull(username: str | None) -> None:
-    if not username:
-        ui.error("Usage: silicon pull <silicon-username>")
-        sys.exit(1)
-    ensure_glass_cli()
-
-    target = Path.cwd() / username
-    if target.exists():
-        ui.error(f"Target folder already exists: {target}")
+def pull(api_token: str | None) -> None:
+    api_key = (api_token or "").strip()
+    if not api_key:
+        ui.info("Paste the API token generated from the silicon page in Glass.")
+        api_key = ui.read_secret("Glass silicon API token").strip()
+    if not api_key:
+        ui.error("Usage: silicon pull <api_token>")
         sys.exit(1)
 
-    connector_code = ui.read_secret("Connector code")
-    target.mkdir(parents=True)
-    fingerprint = hashlib.sha256(f"{socket.gethostname()}::{target.resolve()}".encode()).hexdigest()
-
-    code, claim = _post_json(f"{GLASS_SERVER_URL}/sync/api/pull/claim/", {
-        "username": username, "connector_code": connector_code,
-        "folder_label": username, "folder_fingerprint": fingerprint,
-    })
+    server = GLASS_SERVER_URL.rstrip("/")
+    ui.info("Checking token with Glass...")
+    code, silicon = _get_json_with_silicon_key(f"{server}/api/v1/silicons/me", api_key)
     if not (200 <= code < 300):
-        shutil.rmtree(target, ignore_errors=True)
-        ui.error(claim.get("error", "Pull claim failed."))
+        ui.error(silicon.get("detail") or silicon.get("error") or f"Glass rejected the token (HTTP {code}).")
         sys.exit(1)
 
-    if claim.get("has_snapshot"):
-        archive = tempfile.mktemp(suffix=".tar.gz", prefix="silicon-pull-")
-        req = urllib.request.Request(
-            f"{GLASS_SERVER_URL}/sync/api/silicons/{username}/latest.tar.gz",
-            headers={"X-Source-Token": claim["source_token"]},
+    silicon_id = str(silicon.get("silicon_id") or "").strip()
+    silicon_name = str(silicon.get("name") or "").strip()
+    if not silicon_id:
+        ui.error("Glass did not return a silicon_id for this token.")
+        sys.exit(1)
+
+    default_name = _safe_instance_name(silicon_name, f"silicon-{silicon_id[-6:].lower()}")
+    instance_name, target = _choose_target(default_name, silicon_id)
+
+    try:
+        _seed_glass_files(
+            target,
+            server=server,
+            api_key=api_key,
+            silicon=silicon,
+            instance_name=instance_name,
         )
-        with urllib.request.urlopen(req) as resp, open(archive, "wb") as f:
-            shutil.copyfileobj(resp, f)
-        with tarfile.open(archive) as tf:
-            tf.extractall(target)
-        os.unlink(archive)
+        stemcell.hydrate(str(target))
+    except Exception:
+        if target.exists() and not any(target.iterdir()):
+            shutil.rmtree(target, ignore_errors=True)
+        raise
 
-    (target / ".glass.json").write_text(json.dumps({
-        "server_url": GLASS_SERVER_URL, "silicon_username": username,
-        "source_token": claim["source_token"], "api_key": claim["api_key"],
-        "folder_fingerprint": fingerprint, "last_tree_hash": claim.get("latest_tree_hash", ""),
-    }, indent=2) + "\n")
+    ui.success(f"Pulled Glass silicon '{silicon_name or silicon_id}' into {target}")
+    ui.info(f"Registered as '{instance_name}'.")
 
-    sj = target / "silicon.json"
-    silicon = {}
-    if sj.exists():
-        try:
-            silicon = json.loads(sj.read_text())
-        except json.JSONDecodeError:
-            silicon = {}
-    silicon.setdefault("name", "Silicon")
-    silicon.setdefault("run", "python main.py")
-    silicon.setdefault("brain", "claude")
-    silicon.setdefault("workers", {"browser": ["claude"], "terminal": ["claude"], "writer": ["claude"]})
-    silicon.pop("version", None)
-    silicon["address"] = username
-    silicon["glass"] = {"server_url": GLASS_SERVER_URL, "silicon_username": username,
-                        "api_key": claim["api_key"], "source_token": claim["source_token"]}
-    sj.write_text(json.dumps(silicon, indent=4) + "\n")
-    stemcell._env_upsert(target / "env.py", "GLASS_API_KEY", claim["api_key"])
-
-    registry.register(username, str(target))
-    ui.success(f"Pulled '{username}' into {target}")
-    ui.info("Registered as a silicon instance.")
-
-    # Empty-repo detection → offer to populate
-    bare = {".glass.json", "silicon.json", "env.py"}
-    real = [f for f in target.iterdir()
-            if not (f.name.startswith(".") and f.name != ".glass.json")
-            and f.name != "__pycache__" and f.name not in bare]
-    populated = False
-    if not real and ui.interactive():
-        ui.warn("This looks like an empty repository (only silicon.json and env.py).")
-        if ui.confirm("Do you want to populate it with Silicon?"):
-            stemcell.hydrate(str(target))
-            populated = True
-
-    if not populated:
-        interface_cli.setup(target)
-
-    if ui.interactive() and ui.confirm("Do you want to enable backups for this silicon?"):
-        ensure_glass_cli()
+    if ui.interactive() and ui.confirm("Enable daily 23:59 UTC backups for this silicon?"):
         ui.info("Running initial backup...")
-        if subprocess.run(["glass", "push", "now"], cwd=str(target)).returncode == 0:
-            ui.success("Backup complete.")
-            _start_backup_loop(str(target), username)
+        ok = _manifest_backup_now(str(target), note="initial")
+        if ok:
+            _start_backup_loop(str(target), instance_name)
         else:
-            ui.warn(f"Initial backup failed. Retry with: silicon push {username} now")
+            ui.warn(f"Initial backup failed. Retry with: silicon backup {instance_name} now")
 
 
 def _start_backup_loop(path: str, name: str) -> None:

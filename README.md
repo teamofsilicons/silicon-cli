@@ -32,7 +32,7 @@ silicon status [name]        Show instance status
 silicon browser [name]       Open a headed browser for login
 silicon debug [name]         Tail a running instance's logs
 silicon attach [path]        Register an existing silicon directory
-silicon pull <username>      Pull a silicon from Glass into a new folder
+silicon pull [api_token]     Pull a Glass silicon into a new local folder
 silicon push [name] [now|stop]   Daily 23:59 GMT backups to Glass (now = one-shot, stop = end loop)
 silicon backup [name] [now|stop] Alias for silicon push
 silicon update <target>      Update silicon(s) from the latest stemcell
@@ -46,7 +46,7 @@ silicon help                 Show help
 | Var | Default | Purpose |
 | --- | --- | --- |
 | `SILICON_HOME` | `~/.silicon` | registry + CLI state |
-| `GLASS_SERVER_URL` | `https://glass.unlikefraction.com` | Glass sync server (pull/push) |
+| `GLASS_SERVER_URL` | `https://glass.teamofsilicons.com` | Glass sync server (pull/push) |
 | `SILICON_STEMCELL_REPO` | `unlikefraction/silicon-stemcell` | base for `new` |
 | `SILICON_GLASS_CLI_REPO` | `unlikefraction/glass` | glass backup CLI |
 | `SILICON_PYTHON` | `python3` | interpreter used to run a silicon's `main.py` |
@@ -62,6 +62,21 @@ silicon help                 Show help
 Silicon Interface CLI in the silicon folder when Node 22+ is available.
 When a Glass `.glass.json` is present, setup also starts the background listener
 daemon so the silicon receives live conversation frames without polling.
+
+`silicon pull` is token-native. Generate an API token from the silicon detail
+page in Glass, then run:
+
+```bash
+silicon pull
+# paste the token when prompted
+
+# or, less private because it lands in shell history:
+silicon pull scs_live_...
+```
+
+The command validates the token with Glass, creates a folder named after the
+silicon, hydrates the stemcell, writes `.glass.json`, `.env`, and `env.py`,
+registers the instance, and starts the Silicon Interface daemon.
 
 The local wrappers are written to:
 

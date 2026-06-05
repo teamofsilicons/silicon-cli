@@ -177,7 +177,8 @@ def hydrate(target: str) -> None:
 
 
 def _interactive_setup(dst: Path, env_path: Path, sj: Path, name: str) -> None:
-    if not _env_value(env_path, "TELEGRAM_BOT_TOKEN"):
+    glass_connected = (dst / ".glass.json").exists()
+    if not glass_connected and not _env_value(env_path, "TELEGRAM_BOT_TOKEN"):
         ui.info("You need a Telegram bot token to use Silicon.")
         sys.stderr.write(f"{ui.DIM}  1. Open Telegram and search for @BotFather{ui.RESET}\n")
         sys.stderr.write(f"{ui.DIM}  2. Send /newbot and follow the prompts{ui.RESET}\n")

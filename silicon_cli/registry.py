@@ -82,26 +82,35 @@ def find(search: str | None = None) -> Install | None:
 
 
 def is_multi_target(s: str) -> bool:
-    if s == "all":
+    if s in {"all", "*"}:
         return True
-    parts = s.split(",")
-    return all(p.strip().isdigit() for p in parts) and bool(parts)
+    parts = [p.strip() for p in s.split(",")]
+    return len(parts) > 1 and all(bool(p) for p in parts)
 
 
 def resolve_targets(selector: str) -> list[str]:
-    """'all' | '1,2,4' (1-based indices) → list of install names."""
+    """'all' | '*' | '1,2,4' | 'api-dev,copywriter' → install names."""
     rows = installs()
-    if selector == "all":
+    if selector in {"all", "*"}:
         return [i.name for i in rows]
+    by_name = {i.name: i.name for i in rows}
     out = []
-    for num in selector.split(","):
-        num = num.strip()
-        if not num.isdigit():
+    seen = set()
+    for part in selector.split(","):
+        part = part.strip()
+        name = ""
+        if part.isdigit():
+            idx = int(part) - 1
+            for i in rows:
+                if i.index == idx:
+                    name = i.name
+                    break
+        else:
+            name = by_name.get(part, "")
+        if not name or name in seen:
             continue
-        idx = int(num) - 1
-        for i in rows:
-            if i.index == idx:
-                out.append(i.name)
+        seen.add(name)
+        out.append(name)
     return out
 
 

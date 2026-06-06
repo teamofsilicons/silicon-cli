@@ -16,7 +16,7 @@ import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import registry, stemcell, ui
+from . import process, registry, stemcell, ui
 from .config import GLASS_CLI_REPO, GLASS_SERVER_URL
 
 MANIFEST_NAME = ".backupsilicon"
@@ -622,6 +622,10 @@ def _pull_team(api_key: str, server: str) -> None:
     for instance_name, target in pulled:
         ui.info(f"  {instance_name}: {target}")
 
+    ui.info("Starting pulled silicons...")
+    for instance_name, _target in pulled:
+        process.start_one(instance_name)
+
     if ui.interactive() and ui.confirm("Enable daily 23:59 UTC backups for all pulled silicons?"):
         for instance_name, target in pulled:
             ui.info(f"Running initial backup for '{instance_name}'...")
@@ -679,6 +683,7 @@ def pull(api_token: str | None) -> None:
 
     ui.success(f"Pulled Glass silicon '{silicon_name or silicon_id}' into {target}")
     ui.info(f"Registered as '{instance_name}'.")
+    process.start_one(instance_name)
 
     if ui.interactive() and ui.confirm("Enable daily 23:59 UTC backups for this silicon?"):
         ui.info("Running initial backup...")

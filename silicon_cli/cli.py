@@ -156,7 +156,7 @@ def cmd_help() -> None:
   silicon                     Show status or list instances
   silicon new [dir]           Create a new Silicon (hydrate from stemcell)
   silicon new .               Hydrate the current folder into a runnable silicon
-  silicon start <target>      Start silicon(s). target = name, index, 1,2,4, or all
+  silicon start <target>      Start silicon(s). target = name, *, all, 1,2,4, or name,name
   silicon stop <target>       Stop silicon(s) (agent stays alive)
   silicon stop --full <target> Stop silicon(s) and glass agent
   silicon restart <target>    Restart silicon(s)
@@ -170,7 +170,7 @@ def cmd_help() -> None:
   silicon push [name] now     Push a one-time backup to Glass
   silicon push [name] stop    Stop the daily backup loop
   silicon backup [name] [now|stop] Alias for silicon push
-  silicon update <target>     Update silicon(s) to latest. target = name, index, 1,2,4, or all
+  silicon update <target>     Update silicon(s) to latest. target = name, *, all, 1,2,4, or name,name
   silicon update check [name] Trigger this silicon's system update check now
   silicon update-check [name] Trigger this silicon's system update check now
   silicon list                List all instances

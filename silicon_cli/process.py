@@ -231,7 +231,7 @@ def _multi(target: str, verb: str, fn) -> bool:
     if not names:
         ui.error("No matching installations")
         sys.exit(1)
-    if target == "all":
+    if target in {"all", "*"}:
         joined = ", ".join(names)
         if not ui.confirm(f"Are you sure you want to {verb} the following silicons: {joined}?"):
             return True

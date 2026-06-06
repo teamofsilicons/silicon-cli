@@ -24,9 +24,9 @@ pip install silicon-cli
 silicon                      Show status or list instances
 silicon new [dir]            Create a new Silicon (hydrate from stemcell)
 silicon new .                Hydrate the current folder into a runnable silicon
-silicon start <target>       Start silicon(s). target = name, index, 1,2,4, or all
-silicon stop [--full] <target>  Stop silicon(s) (--full also stops the glass agent)
-silicon restart <target>     Restart silicon(s)
+silicon start <target>       Start silicon(s). target = name, *, all, 1,2,4, or name,name
+silicon stop [--full] <target>  Stop silicon(s). target = name, *, all, 1,2,4, or name,name
+silicon restart <target>     Restart silicon(s). target = name, *, all, 1,2,4, or name,name
 silicon agent <start|stop|status> [name]   Manage the per-silicon glass agent
 silicon status [name]        Show instance status
 silicon browser [name]       Open a headed browser for login
@@ -76,8 +76,8 @@ silicon pull sct_live_...
 
 The command validates the token with Glass, mints one local silicon API key per
 team silicon, creates one folder per silicon, hydrates the stemcell, writes
-`.glass.json`, `.env`, and `env.py`, registers each instance, and starts each
-Silicon Interface daemon.
+`.glass.json`, `.env`, and `env.py`, registers each instance, starts each
+Silicon Interface daemon, and starts each silicon process.
 
 During team pull, setup asks for the default brain/fallback settings once. You
 can apply those settings to every silicon, or select specific silicons that

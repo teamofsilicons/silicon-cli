@@ -79,8 +79,12 @@ silicon, hydrates the stemcell, writes `.glass.json`, `.env`, and `env.py`,
 registers the instance, and starts the Silicon Interface daemon.
 
 Provider API keys for voice, browser profiles, billing, and architecture
-generation are configured on the Glass backend. A Glass-pulled silicon only
-stores its Glass API token locally.
+generation are configured on the Glass backend. After the silicon API token is
+validated, `silicon pull` reads the team's provider-key metadata from Glass,
+shows each provider as saved/missing without returning plaintext secrets, and
+asks whether this silicon should use the Glass-managed keys. A Glass-pulled
+silicon only stores its Glass API token plus a local marker that provider keys
+come from Glass.
 
 The local wrappers are written to:
 

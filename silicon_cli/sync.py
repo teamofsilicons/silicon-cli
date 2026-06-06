@@ -24,11 +24,11 @@ BACKUP_UPLOAD_PATH = "/api/v1/silicon-backups/"
 BACKUP_HOUR_UTC = 23
 BACKUP_MINUTE_UTC = 59
 PROVIDER_API_KEYS = (
-    ("GEMINI_API_KEY", "Gemini API key"),
-    ("OPENAI_API_KEY", "OpenAI API key"),
-    ("ELEVENLABS_API_KEY", "ElevenLabs API key"),
-    ("DEEPGRAM_API_KEY", "Deepgram API key"),
-    ("STEEL_API_KEY", "Steel API key"),
+    ("GEMINI_API_KEY", "Gemini"),
+    ("OPENAI_API_KEY", "OpenAI"),
+    ("ELEVENLABS_API_KEY", "ElevenLabs"),
+    ("DEEPGRAM_API_KEY", "Deepgram"),
+    ("STEEL_API_KEY", "Steel"),
 )
 
 
@@ -201,65 +201,95 @@ def _get_json_with_silicon_key(url: str, api_key: str) -> tuple[int, dict]:
         return 0, {"detail": str(e)}
 
 
-def _post_json_with_silicon_key(url: str, api_key: str, payload: dict) -> tuple[int, dict]:
-    req = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "X-Silicon-Key": api_key,
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-            "User-Agent": "silicon-cli",
-        },
-        method="POST",
-    )
-    try:
-        with _urlopen(req, timeout=30) as resp:
-            return resp.status, json.loads(resp.read().decode() or "{}")
-    except urllib.error.HTTPError as e:
-        try:
-            return e.code, json.loads(e.read().decode() or "{}")
-        except Exception:
-            return e.code, {}
-    except Exception as e:
-        return 0, {"detail": str(e)}
-
-
-def _collect_team_api_keys() -> dict[str, str]:
-    if not ui.interactive():
-        return {}
-    ui.info("Provider API keys for this team. Leave blank to keep existing Glass/server values.")
-    keys: dict[str, str] = {}
-    for key_name, label in PROVIDER_API_KEYS:
-        value = ui.read_secret(label).strip()
-        if value:
-            keys[key_name] = value
-    return keys
-
-
-def _setup_team_api_keys(server: str, api_key: str, silicon: dict) -> None:
-    team_slug = str(
+def _team_slug_from_silicon(silicon: dict) -> str:
+    return str(
         silicon.get("team")
         or silicon.get("owner_team_slug")
         or silicon.get("team_slug")
         or ""
     ).strip()
+
+
+def _team_api_keys_url(server: str, team_slug: str) -> str:
+    return f"{server}/api/v1/teams/{urllib.parse.quote(team_slug)}/api-keys"
+
+
+def _fetch_team_api_keys(server: str, api_key: str, team_slug: str) -> tuple[int, dict]:
+    return _get_json_with_silicon_key(_team_api_keys_url(server, team_slug), api_key)
+
+
+def _team_key_rows(body: dict) -> list[dict]:
+    rows = body.get("keys") if isinstance(body, dict) else None
+    return rows if isinstance(rows, list) else []
+
+
+def _key_row_by_name(rows: list[dict]) -> dict[str, dict]:
+    out = {}
+    for row in rows:
+        if isinstance(row, dict):
+            name = str(row.get("key_name") or "").strip().upper()
+            if name:
+                out[name] = row
+    return out
+
+
+def _configured_team_key_names(rows: list[dict]) -> list[str]:
+    by_name = _key_row_by_name(rows)
+    configured = []
+    for key_name, _label in PROVIDER_API_KEYS:
+        row = by_name.get(key_name, {})
+        if row.get("configured"):
+            configured.append(key_name)
+    return configured
+
+
+def _display_team_api_keys(rows: list[dict]) -> None:
+    by_name = _key_row_by_name(rows)
+    ui.info("Provider API token status from Glass (secrets are not returned):")
+    for key_name, label in PROVIDER_API_KEYS:
+        row = by_name.get(key_name, {})
+        if row.get("configured"):
+            status = "saved in Glass"
+        elif row.get("server_fallback_configured"):
+            status = "server fallback only"
+        else:
+            status = "missing"
+        ui.info(f"  {label} ({key_name}): {status}")
+
+
+def _choose_glass_provider_keys(server: str, api_key: str, silicon: dict) -> dict[str, str]:
+    team_slug = _team_slug_from_silicon(silicon)
     if not team_slug:
-        ui.warn("Glass did not return a team slug; provider API keys were not saved.")
-        return
-    keys = _collect_team_api_keys()
-    if not keys:
-        ui.info("No provider API keys entered; using existing Glass/server values.")
-        return
-    code, body = _post_json_with_silicon_key(
-        f"{server}/api/v1/teams/{urllib.parse.quote(team_slug)}/api-keys",
-        api_key,
-        {"keys": keys},
-    )
-    if 200 <= code < 300:
-        ui.success(f"Saved {len(keys)} provider key{'s' if len(keys) != 1 else ''} to Glass.")
-        return
-    ui.warn(body.get("detail") or body.get("error") or f"Could not save provider keys (HTTP {code}).")
+        ui.warn("Glass did not return a team slug; provider API token status was not checked.")
+        return {}
+
+    code, body = _fetch_team_api_keys(server, api_key, team_slug)
+    if not (200 <= code < 300):
+        ui.warn(body.get("detail") or body.get("error") or f"Could not read provider API tokens from Glass (HTTP {code}).")
+        return {}
+
+    rows = _team_key_rows(body)
+    if not rows:
+        ui.warn("Glass did not return provider API token metadata.")
+        return {}
+
+    _display_team_api_keys(rows)
+    configured = _configured_team_key_names(rows)
+    missing = [key_name for key_name, _label in PROVIDER_API_KEYS if key_name not in configured]
+    if missing:
+        ui.warn("Some provider API tokens are not saved in Glass for this team.")
+        ui.info("Set them in Glass > API keys, then rerun silicon pull if this silicon needs them.")
+        return {}
+
+    if not ui.confirm("Use these Glass-managed provider API tokens for this silicon?", default_yes=True):
+        ui.info("Skipping Glass-managed provider API token marker for this silicon.")
+        return {}
+
+    return {
+        "SILICON_PROVIDER_KEYS_SOURCE": "glass",
+        "SILICON_PROVIDER_KEYS_TEAM": team_slug,
+        "SILICON_PROVIDER_KEYS": ",".join(configured),
+    }
 
 
 def _safe_instance_name(raw: str, fallback: str = "silicon") -> str:
@@ -305,7 +335,15 @@ def _write_dotenv(path: Path, values: dict[str, str]) -> None:
     path.write_text("\n".join(rendered).rstrip() + "\n")
 
 
-def _seed_glass_files(target: Path, *, server: str, api_key: str, silicon: dict, instance_name: str) -> None:
+def _seed_glass_files(
+    target: Path,
+    *,
+    server: str,
+    api_key: str,
+    silicon: dict,
+    instance_name: str,
+    provider_key_env: dict[str, str] | None = None,
+) -> None:
     silicon_id = str(silicon.get("silicon_id") or "").strip()
     silicon_name = str(silicon.get("name") or instance_name).strip()
     glass = {
@@ -318,16 +356,16 @@ def _seed_glass_files(target: Path, *, server: str, api_key: str, silicon: dict,
     }
     target.mkdir(parents=True, exist_ok=True)
     (target / ".glass.json").write_text(json.dumps(glass, indent=2) + "\n")
-    _write_dotenv(
-        target / ".env",
-        {
-            "GLASS_SERVER_URL": server,
-            "GLASS_API_KEY": api_key,
-            "SILICON_UPDATE_AUTH_KEY": api_key,
-            "SILICON_ID": silicon_id,
-            "SILICON_NAME": silicon_name,
-        },
-    )
+    env_values = {
+        "GLASS_SERVER_URL": server,
+        "GLASS_API_KEY": api_key,
+        "SILICON_UPDATE_AUTH_KEY": api_key,
+        "SILICON_ID": silicon_id,
+        "SILICON_NAME": silicon_name,
+    }
+    if provider_key_env:
+        env_values.update(provider_key_env)
+    _write_dotenv(target / ".env", env_values)
     stemcell._env_upsert(target / "env.py", "GLASS_API_KEY", api_key)
 
     config = {}
@@ -456,6 +494,7 @@ def pull(api_token: str | None) -> None:
 
     default_name = _safe_instance_name(silicon_name, f"silicon-{silicon_id[-6:].lower()}")
     instance_name, target = _choose_target(default_name, silicon_id)
+    provider_key_env = _choose_glass_provider_keys(server, api_key, silicon)
 
     try:
         _seed_glass_files(
@@ -464,9 +503,9 @@ def pull(api_token: str | None) -> None:
             api_key=api_key,
             silicon=silicon,
             instance_name=instance_name,
+            provider_key_env=provider_key_env,
         )
         stemcell.hydrate(str(target))
-        _setup_team_api_keys(server, api_key, silicon)
     except Exception:
         if target.exists() and not any(target.iterdir()):
             shutil.rmtree(target, ignore_errors=True)

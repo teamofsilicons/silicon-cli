@@ -201,6 +201,31 @@ def _get_json_with_silicon_key(url: str, api_key: str) -> tuple[int, dict]:
         return 0, {"detail": str(e)}
 
 
+def _post_json_with_team_key(url: str, team_key: str, body=None) -> tuple[int, dict]:
+    data = json.dumps(body or {}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method="POST",
+        headers={
+            "X-Team-Key": team_key,
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "silicon-cli",
+        },
+    )
+    try:
+        with _urlopen(req, timeout=60) as resp:
+            return resp.status, json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode() or "{}")
+        except Exception:
+            return e.code, {}
+    except Exception as e:
+        return 0, {"detail": str(e)}
+
+
 def _team_slug_from_silicon(silicon: dict) -> str:
     return str(
         silicon.get("team")
@@ -257,6 +282,30 @@ def _display_team_api_keys(rows: list[dict]) -> None:
         ui.info(f"  {label} ({key_name}): {status}")
 
 
+def _provider_key_env_from_rows(team_slug: str, rows: list[dict], prompt: str) -> dict[str, str]:
+    if not rows:
+        ui.warn("Glass did not return provider API token metadata.")
+        return {}
+
+    _display_team_api_keys(rows)
+    configured = _configured_team_key_names(rows)
+    missing = [key_name for key_name, _label in PROVIDER_API_KEYS if key_name not in configured]
+    if missing:
+        ui.warn("Some provider API tokens are not saved in Glass for this team.")
+        ui.info("Set them in Glass > API keys, then rerun silicon pull if these silicons need them.")
+        return {}
+
+    if not ui.confirm(prompt, default_yes=True):
+        ui.info("Skipping Glass-managed provider API token marker.")
+        return {}
+
+    return {
+        "SILICON_PROVIDER_KEYS_SOURCE": "glass",
+        "SILICON_PROVIDER_KEYS_TEAM": team_slug,
+        "SILICON_PROVIDER_KEYS": ",".join(configured),
+    }
+
+
 def _choose_glass_provider_keys(server: str, api_key: str, silicon: dict) -> dict[str, str]:
     team_slug = _team_slug_from_silicon(silicon)
     if not team_slug:
@@ -268,28 +317,11 @@ def _choose_glass_provider_keys(server: str, api_key: str, silicon: dict) -> dic
         ui.warn(body.get("detail") or body.get("error") or f"Could not read provider API tokens from Glass (HTTP {code}).")
         return {}
 
-    rows = _team_key_rows(body)
-    if not rows:
-        ui.warn("Glass did not return provider API token metadata.")
-        return {}
-
-    _display_team_api_keys(rows)
-    configured = _configured_team_key_names(rows)
-    missing = [key_name for key_name, _label in PROVIDER_API_KEYS if key_name not in configured]
-    if missing:
-        ui.warn("Some provider API tokens are not saved in Glass for this team.")
-        ui.info("Set them in Glass > API keys, then rerun silicon pull if this silicon needs them.")
-        return {}
-
-    if not ui.confirm("Use these Glass-managed provider API tokens for this silicon?", default_yes=True):
-        ui.info("Skipping Glass-managed provider API token marker for this silicon.")
-        return {}
-
-    return {
-        "SILICON_PROVIDER_KEYS_SOURCE": "glass",
-        "SILICON_PROVIDER_KEYS_TEAM": team_slug,
-        "SILICON_PROVIDER_KEYS": ",".join(configured),
-    }
+    return _provider_key_env_from_rows(
+        team_slug,
+        _team_key_rows(body),
+        "Use these Glass-managed provider API tokens for this silicon?",
+    )
 
 
 def _safe_instance_name(raw: str, fallback: str = "silicon") -> str:
@@ -470,16 +502,150 @@ def _seconds_until_next_backup(now: datetime | None = None) -> float:
     return max(1.0, (target - now).total_seconds())
 
 
+def _team_pull_url(server: str) -> str:
+    return f"{server}/api/v1/teams/setup-pull"
+
+
+def _silicon_display(silicon: dict) -> str:
+    name = str(silicon.get("name") or "").strip()
+    sid = str(silicon.get("silicon_id") or "").strip()
+    return f"{name} ({sid})" if name and sid else name or sid or "silicon"
+
+
+def _select_silicons_for_custom_settings(silicons: list[dict]) -> set[str]:
+    if not ui.interactive() or len(silicons) <= 1:
+        return set()
+    if ui.confirm("Use these same settings for all silicons?", default_yes=True):
+        return set()
+
+    ui.info("Select silicons that need different settings. You can use numbers, names, or silicon IDs.")
+    lookup: dict[str, str] = {}
+    for idx, silicon in enumerate(silicons, start=1):
+        sid = str(silicon.get("silicon_id") or "").strip()
+        name = str(silicon.get("name") or "").strip()
+        ui.info(f"  {idx}. {_silicon_display(silicon)}")
+        if sid:
+            lookup[str(idx)] = sid
+            lookup[sid.lower()] = sid
+        if name:
+            lookup[name.lower()] = sid
+
+    raw = ui.ask("Different settings for", "")
+    selected: set[str] = set()
+    for part in raw.replace(";", ",").split(","):
+        key = part.strip().lower()
+        if key and key in lookup:
+            selected.add(lookup[key])
+    if raw.strip() and not selected:
+        ui.warn("No matching silicons selected; using the default settings for all.")
+    return selected
+
+
+def _team_setup_configs(silicons: list[dict]) -> dict[str, dict]:
+    base = stemcell.choose_setup_config("Default setup for all team silicons")
+    custom = _select_silicons_for_custom_settings(silicons)
+    configs: dict[str, dict] = {}
+    for silicon in silicons:
+        sid = str(silicon.get("silicon_id") or "").strip()
+        configs[sid] = base
+    for silicon in silicons:
+        sid = str(silicon.get("silicon_id") or "").strip()
+        if sid in custom:
+            configs[sid] = stemcell.choose_setup_config(f"Setup for {_silicon_display(silicon)}")
+    return configs
+
+
+def _provider_keys_from_team_pull(body: dict) -> dict[str, str]:
+    team = body.get("team") if isinstance(body, dict) else {}
+    team_slug = str((team or {}).get("slug") or "").strip()
+    api_keys = body.get("api_keys") if isinstance(body, dict) else {}
+    if not team_slug:
+        ui.warn("Glass did not return a team slug; provider API token status was not checked.")
+        return {}
+    return _provider_key_env_from_rows(
+        team_slug,
+        _team_key_rows(api_keys if isinstance(api_keys, dict) else {}),
+        "Use these Glass-managed provider API tokens for all pulled silicons?",
+    )
+
+
+def _pull_team(api_key: str, server: str) -> None:
+    ui.info("Checking team setup token with Glass...")
+    code, body = _post_json_with_team_key(_team_pull_url(server), api_key, {})
+    if not (200 <= code < 300):
+        ui.error(body.get("detail") or body.get("error") or f"Glass rejected the team token (HTTP {code}).")
+        sys.exit(1)
+
+    team = body.get("team") if isinstance(body, dict) else {}
+    team_name = str((team or {}).get("name") or (team or {}).get("slug") or "team").strip()
+    silicons = body.get("silicons") if isinstance(body, dict) else []
+    silicons = [s for s in silicons if isinstance(s, dict) and str(s.get("silicon_id") or "").strip()]
+    if not silicons:
+        ui.error(f"Glass returned no silicons for team '{team_name}'.")
+        sys.exit(1)
+
+    provider_key_env = _provider_keys_from_team_pull(body)
+    setup_configs = _team_setup_configs(silicons)
+    pulled: list[tuple[str, Path]] = []
+
+    for silicon in silicons:
+        silicon_id = str(silicon.get("silicon_id") or "").strip()
+        silicon_name = str(silicon.get("name") or "").strip()
+        silicon_key = str(silicon.get("api_key") or "").strip()
+        if not silicon_key:
+            ui.warn(f"Skipping {_silicon_display(silicon)}; Glass did not return a silicon API key.")
+            continue
+
+        default_name = _safe_instance_name(silicon_name, f"silicon-{silicon_id[-6:].lower()}")
+        instance_name, target = _choose_target(default_name, silicon_id)
+        try:
+            _seed_glass_files(
+                target,
+                server=server,
+                api_key=silicon_key,
+                silicon=silicon,
+                instance_name=instance_name,
+                provider_key_env=provider_key_env,
+            )
+            stemcell.hydrate(str(target), setup_config=setup_configs.get(silicon_id))
+            pulled.append((instance_name, target))
+        except Exception:
+            if target.exists() and not any(target.iterdir()):
+                shutil.rmtree(target, ignore_errors=True)
+            raise
+
+    if not pulled:
+        ui.error("No silicons were pulled.")
+        sys.exit(1)
+
+    ui.success(f"Pulled {len(pulled)} silicon(s) from team '{team_name}'.")
+    for instance_name, target in pulled:
+        ui.info(f"  {instance_name}: {target}")
+
+    if ui.interactive() and ui.confirm("Enable daily 23:59 UTC backups for all pulled silicons?"):
+        for instance_name, target in pulled:
+            ui.info(f"Running initial backup for '{instance_name}'...")
+            ok = _manifest_backup_now(str(target), note="initial")
+            if ok:
+                _start_backup_loop(str(target), instance_name)
+            else:
+                ui.warn(f"Initial backup failed. Retry with: silicon backup {instance_name} now")
+
+
 def pull(api_token: str | None) -> None:
     api_key = (api_token or "").strip()
     if not api_key:
-        ui.info("Paste the API token generated from the silicon page in Glass.")
-        api_key = ui.read_secret("Glass silicon API token").strip()
+        ui.info("Paste the team setup token generated from Glass.")
+        api_key = ui.read_secret("Glass team setup token").strip()
     if not api_key:
         ui.error("Usage: silicon pull <api_token>")
         sys.exit(1)
 
     server = GLASS_SERVER_URL.rstrip("/")
+    if api_key.startswith("sct_live_"):
+        _pull_team(api_key, server)
+        return
+
     ui.info("Checking token with Glass...")
     code, silicon = _get_json_with_silicon_key(f"{server}/api/v1/silicons/me", api_key)
     if not (200 <= code < 300):

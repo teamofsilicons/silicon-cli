@@ -90,7 +90,7 @@ def _choose_brain_order(primary: str) -> list[str]:
     return [primary]
 
 
-def hydrate(target: str) -> None:
+def hydrate(target: str, setup_config=None) -> None:
     abs_target = str(Path(target).resolve())
     os.makedirs(abs_target, exist_ok=True)
     dst = Path(abs_target)
@@ -158,7 +158,9 @@ def hydrate(target: str) -> None:
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
         # Interactive setup
-        if ui.interactive():
+        if setup_config is not None:
+            _apply_setup(sj, setup_config)
+        elif ui.interactive():
             _interactive_setup(sj)
 
         # Install dependencies
@@ -177,8 +179,10 @@ def hydrate(target: str) -> None:
         shutil.rmtree(tmp_src, ignore_errors=True)
 
 
-def _interactive_setup(sj: Path) -> None:
+def choose_setup_config(label: str = "Default silicon settings") -> dict:
     # Brain provider order — one choice drives manager + every worker type.
+    if label:
+        ui.info(label)
     brain = "claude"
     order = ["claude"]
     workers = {"browser": ["claude"], "terminal": ["claude"], "writer": ["claude"]}
@@ -193,12 +197,30 @@ def _interactive_setup(sj: Path) -> None:
         brain = "codex"
         order = ["codex"]
         workers = {"browser": ["codex"], "terminal": ["codex"], "writer": ["codex"]}
+    return {
+        "brain": brain,
+        "brain_order": order,
+        "workers": {k: _provider_list(v, ["claude"]) for k, v in workers.items()},
+    }
 
+
+def _apply_setup(sj: Path, setup_config: dict) -> None:
     try:
         silicon = json.loads(sj.read_text())
     except Exception:
         silicon = {}
-    silicon["brain"] = brain
-    silicon["brain_order"] = order
-    silicon["workers"] = {k: _provider_list(v, ["claude"]) for k, v in workers.items()}
+    brain = setup_config.get("brain") if isinstance(setup_config, dict) else ""
+    order = setup_config.get("brain_order") if isinstance(setup_config, dict) else None
+    workers = setup_config.get("workers") if isinstance(setup_config, dict) else None
+    silicon["brain"] = "codex" if brain == "codex" else "claude"
+    silicon["brain_order"] = _provider_list(order, [silicon["brain"]])
+    silicon["workers"] = {
+        "browser": _provider_list((workers or {}).get("browser"), silicon["brain_order"]),
+        "terminal": _provider_list((workers or {}).get("terminal"), silicon["brain_order"]),
+        "writer": _provider_list((workers or {}).get("writer"), silicon["brain_order"]),
+    }
     sj.write_text(json.dumps(silicon, indent=4) + "\n")
+
+
+def _interactive_setup(sj: Path) -> None:
+    _apply_setup(sj, choose_setup_config(""))

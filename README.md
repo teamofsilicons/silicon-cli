@@ -32,7 +32,7 @@ silicon status [name]        Show instance status
 silicon browser [name]       Open a headed browser for login
 silicon debug [name]         Tail a running instance's logs
 silicon attach [path]        Register an existing silicon directory
-silicon pull [api_token]     Pull a Glass silicon into a new local folder
+silicon pull [api_token]     Pull a Glass team or silicon into local folders
 silicon push [name] [now|stop]   Daily 23:59 GMT backups to Glass (now = one-shot, stop = end loop)
 silicon backup [name] [now|stop] Alias for silicon push
 silicon update <target>      Update silicon(s) from the latest stemcell
@@ -63,28 +63,34 @@ Silicon Interface CLI in the silicon folder when Node 22+ is available.
 When a Glass `.glass.json` is present, setup also starts the background listener
 daemon so the silicon receives live conversation frames without polling.
 
-`silicon pull` is token-native. Generate an API token from the silicon detail
-page in Glass, then run:
+`silicon pull` is token-native. Generate a team setup token from Glass >
+Silicons > Team setup token, then run:
 
 ```bash
 silicon pull
 # paste the token when prompted
 
 # or, less private because it lands in shell history:
-silicon pull scs_live_...
+silicon pull sct_live_...
 ```
 
-The command validates the token with Glass, creates a folder named after the
-silicon, hydrates the stemcell, writes `.glass.json`, `.env`, and `env.py`,
-registers the instance, and starts the Silicon Interface daemon.
+The command validates the token with Glass, mints one local silicon API key per
+team silicon, creates one folder per silicon, hydrates the stemcell, writes
+`.glass.json`, `.env`, and `env.py`, registers each instance, and starts each
+Silicon Interface daemon.
+
+During team pull, setup asks for the default brain/fallback settings once. You
+can apply those settings to every silicon, or select specific silicons that
+need different settings and answer the brain prompt for those silicons only.
+Older per-silicon `scs_live_...` tokens still pull just that one silicon.
 
 Provider API keys for voice, browser profiles, billing, and architecture
 generation are configured on the Glass backend. After the silicon API token is
 validated, `silicon pull` reads the team's provider-key metadata from Glass,
 shows each provider as saved/missing without returning plaintext secrets, and
-asks whether this silicon should use the Glass-managed keys. A Glass-pulled
-silicon only stores its Glass API token plus a local marker that provider keys
-come from Glass.
+asks whether the pulled silicon(s) should use the Glass-managed keys. A
+Glass-pulled silicon only stores its Glass API token plus a local marker that
+provider keys come from Glass.
 
 The local wrappers are written to:
 

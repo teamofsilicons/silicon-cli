@@ -13,6 +13,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import webbrowser
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -226,6 +227,30 @@ def _post_json_with_team_key(url: str, team_key: str, body=None) -> tuple[int, d
         return 0, {"detail": str(e)}
 
 
+def _post_json(url: str, body=None, *, timeout: int = 60) -> tuple[int, dict]:
+    data = json.dumps(body or {}).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=data,
+        method="POST",
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "silicon-cli",
+        },
+    )
+    try:
+        with _urlopen(req, timeout=timeout) as resp:
+            return resp.status, json.loads(resp.read().decode() or "{}")
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read().decode() or "{}")
+        except Exception:
+            return e.code, {}
+    except Exception as e:
+        return 0, {"detail": str(e)}
+
+
 def _team_slug_from_silicon(silicon: dict) -> str:
     return str(
         silicon.get("team")
@@ -263,7 +288,12 @@ def _configured_team_key_names(rows: list[dict]) -> list[str]:
     configured = []
     for key_name, _label in PROVIDER_API_KEYS:
         row = by_name.get(key_name, {})
-        if row.get("configured"):
+        if (
+            row.get("configured")
+            or row.get("team_configured")
+            or row.get("center_configured")
+            or row.get("server_fallback_configured")
+        ):
             configured.append(key_name)
     return configured
 
@@ -273,8 +303,15 @@ def _display_team_api_keys(rows: list[dict]) -> None:
     ui.info("Provider API token status from Glass (secrets are not returned):")
     for key_name, label in PROVIDER_API_KEYS:
         row = by_name.get(key_name, {})
-        if row.get("configured"):
-            status = "saved in Glass"
+        source = str(row.get("source") or "").strip()
+        if row.get("team_configured") or source == "team":
+            status = "team override"
+        elif row.get("center_configured") or source == "center":
+            status = "center managed"
+        elif row.get("server_fallback_configured") or source == "server":
+            status = "server fallback"
+        elif row.get("configured"):
+            status = "Glass managed"
         elif row.get("server_fallback_configured"):
             status = "server fallback only"
         else:
@@ -282,7 +319,7 @@ def _display_team_api_keys(rows: list[dict]) -> None:
         ui.info(f"  {label} ({key_name}): {status}")
 
 
-def _provider_key_env_from_rows(team_slug: str, rows: list[dict], prompt: str) -> dict[str, str]:
+def _provider_key_env_from_rows(team_slug: str, rows: list[dict], prompt: str = "") -> dict[str, str]:
     if not rows:
         ui.warn("Glass did not return provider API token metadata.")
         return {}
@@ -293,10 +330,6 @@ def _provider_key_env_from_rows(team_slug: str, rows: list[dict], prompt: str) -
     if missing:
         ui.warn("Some provider API tokens are not saved in Glass for this team.")
         ui.info("Set them in Glass > API keys, then rerun silicon pull if these silicons need them.")
-        return {}
-
-    if not ui.confirm(prompt, default_yes=True):
-        ui.info("Skipping Glass-managed provider API token marker.")
         return {}
 
     return {
@@ -504,6 +537,89 @@ def _seconds_until_next_backup(now: datetime | None = None) -> float:
 
 def _team_pull_url(server: str) -> str:
     return f"{server}/api/v1/teams/setup-pull"
+
+
+def _browser_profile_setup_start_url(server: str) -> str:
+    return f"{server}/api/v1/browser-profiles/setup/start"
+
+
+def _browser_profile_setup_finish_url(server: str) -> str:
+    return f"{server}/api/v1/browser-profiles/setup/finish"
+
+
+def _browser_profile_finish_command(token: str, session_id: str, before_ids: list[str]) -> str:
+    before = ",".join(before_ids)
+    return f"silicon browser-profile finish '{token}' '{session_id}' '{before}'"
+
+
+def browser_profile_finish(token: str | None, session_id: str | None, before_ids_csv: str | None = None) -> None:
+    token = (token or "").strip()
+    session_id = (session_id or "").strip()
+    if not token or not session_id:
+        ui.error("Usage: silicon browser-profile finish <setup_token> <session_id> [before_profile_ids_csv]")
+        sys.exit(1)
+    before_ids = [p.strip() for p in (before_ids_csv or "").split(",") if p.strip()]
+    server = GLASS_SERVER_URL.rstrip("/")
+    ui.info("Finishing browser profile setup with Glass...")
+    code, body = _post_json(
+        _browser_profile_setup_finish_url(server),
+        {"token": token, "session_id": session_id, "before_profile_ids": before_ids},
+        timeout=120,
+    )
+    if not (200 <= code < 300):
+        ui.error(body.get("detail") or body.get("error") or f"Glass could not finish the profile setup (HTTP {code}).")
+        sys.exit(1)
+    profile = body.get("profile") or {}
+    name = profile.get("name") or profile.get("id") or "browser profile"
+    assigned = body.get("assigned", 0)
+    ui.success(f"Saved Steel profile '{name}' and assigned it to {assigned} silicon(s).")
+
+
+def browser_profile_setup(token: str | None) -> None:
+    token = (token or "").strip()
+    if not token:
+        ui.error("Usage: silicon browser-profile setup <setup_token>")
+        sys.exit(1)
+    server = GLASS_SERVER_URL.rstrip("/")
+    ui.info("Starting browser profile setup with Glass...")
+    code, body = _post_json(_browser_profile_setup_start_url(server), {"token": token}, timeout=120)
+    if not (200 <= code < 300):
+        ui.error(body.get("detail") or body.get("error") or f"Glass could not start the profile setup (HTTP {code}).")
+        sys.exit(1)
+
+    session_id = str(body.get("session_id") or "").strip()
+    viewer_url = str(body.get("viewer_url") or body.get("debug_url") or "").strip()
+    before_ids = [str(p) for p in (body.get("before_profile_ids") or []) if p]
+    if not session_id or not viewer_url:
+        ui.error("Glass returned an incomplete browser setup session.")
+        sys.exit(1)
+
+    ui.success("Steel setup session started.")
+    ui.info(f"Viewer URL: {viewer_url}")
+    try:
+        webbrowser.open(viewer_url)
+    except Exception:
+        pass
+
+    finish_cmd = _browser_profile_finish_command(token, session_id, before_ids)
+    if not ui.interactive():
+        ui.info("When the browser is configured, finish with:")
+        print(f"  {finish_cmd}")
+        return
+
+    print()
+    ui.info("Use the browser window to log in or configure the profile.")
+    ui.info("Press Enter here when you're done. Ctrl+C leaves the session open; finish later with:")
+    print(f"  {finish_cmd}")
+    try:
+        input()
+    except KeyboardInterrupt:
+        print()
+        ui.warn("Setup session left open.")
+        ui.info(f"Finish later with: {finish_cmd}")
+        return
+
+    browser_profile_finish(token, session_id, ",".join(before_ids))
 
 
 def _silicon_display(silicon: dict) -> str:

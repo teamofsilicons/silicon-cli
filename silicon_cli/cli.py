@@ -10,7 +10,7 @@ from .config import python_run_cmd
 
 COMMANDS = ["start", "stop", "restart", "status", "browser", "debug", "attach",
             "pull", "push", "backup", "update", "update-check", "check-update",
-            "list", "install", "new", "help", "script", "agent"]
+            "browser-profile", "list", "install", "new", "help", "script", "agent"]
 
 
 # ----------------------------------------------------------------- commands
@@ -163,6 +163,10 @@ def cmd_help() -> None:
   silicon agent <start|stop|status> [name]  Manage glass agent
   silicon status [name]       Show instance status
   silicon browser [name]      Open headed browser for login
+  silicon browser-profile setup <token>
+                             Create a Steel browser profile through Glass
+  silicon browser-profile finish <token> <session_id> [before_ids_csv]
+                             Finish a browser profile setup session
   silicon debug [name]        Attach to running instance (live logs)
   silicon attach [path]       Register an existing silicon instance
   silicon pull [api_token]    Pull a Glass team or silicon into local folders
@@ -220,6 +224,18 @@ def main(argv: list[str] | None = None) -> None:
         cmd_status(a1)
     elif cmd == "browser":
         cmd_browser(a1)
+    elif cmd == "browser-profile":
+        if a1 == "setup":
+            sync.browser_profile_setup(a2)
+        elif a1 == "finish":
+            sync.browser_profile_finish(
+                a2,
+                argv[3] if len(argv) > 3 else None,
+                argv[4] if len(argv) > 4 else None,
+            )
+        else:
+            ui.error("Usage: silicon browser-profile <setup|finish> ...")
+            sys.exit(1)
     elif cmd == "debug":
         cmd_debug(a1)
     elif cmd == "attach":

@@ -30,6 +30,8 @@ silicon restart <target>     Restart silicon(s). target = name, *, all, 1,2,4, o
 silicon agent <start|stop|status> [name]   Manage the per-silicon glass agent
 silicon status [name]        Show instance status
 silicon browser [name]       Open a headed browser for login
+silicon browser-profile setup <token>  Create a Steel browser profile through Glass
+silicon browser-profile finish <token> <session_id> [before_ids_csv]  Finish profile setup
 silicon debug [name]         Tail a running instance's logs
 silicon attach [path]        Register an existing silicon directory
 silicon pull [api_token]     Pull a Glass team or silicon into local folders
@@ -86,9 +88,9 @@ Older per-silicon `scs_live_...` tokens still pull just that one silicon.
 
 Provider API keys for voice, browser profiles, billing, and architecture
 generation are configured on the Glass backend. After the silicon API token is
-validated, `silicon pull` reads the team's provider-key metadata from Glass,
-shows each provider as saved/missing without returning plaintext secrets, and
-asks whether the pulled silicon(s) should use the Glass-managed keys. A
+validated, `silicon pull` reads the team's provider-key metadata from Glass and
+automatically marks the pulled silicon(s) to use Glass-managed keys when every
+provider is available. Plaintext secrets are never returned to the CLI. A
 Glass-pulled silicon only stores its Glass API token plus a local marker that
 provider keys come from Glass.
 

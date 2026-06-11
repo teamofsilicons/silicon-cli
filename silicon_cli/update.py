@@ -50,8 +50,11 @@ def _update_one(target: str | None, tmp_src: str, updater: str, multi: bool) -> 
         sys.exit(1)
 
     ui.info(f"Updating '{inst.name}' safely...")
-    r = subprocess.run([python_run_cmd(), updater, "update", "--source", tmp_src, "--target", inst.path])
+    r = subprocess.run([python_run_cmd(inst.path), updater, "update", "--source", tmp_src, "--target", inst.path])
     if r.returncode == 0:
+        req = Path(inst.path) / "requirements.txt"
+        if req.exists():
+            stemcell.install_requirements(Path(inst.path), req)
         ui.success(f"'{inst.name}' updated successfully")
     elif r.returncode == 2:
         ui.error(f"Update aborted — merge conflicts detected in '{inst.name}'. No files overwritten.")
@@ -87,9 +90,9 @@ def trigger_update_check(target: str | None) -> None:
     main_py = root / "main.py"
 
     if updater.exists():
-        cmd = [python_run_cmd(), str(updater)]
+        cmd = [python_run_cmd(inst.path), str(updater)]
     elif main_py.exists():
-        cmd = [python_run_cmd(), "main.py", "update-check"]
+        cmd = [python_run_cmd(inst.path), "main.py", "update-check"]
     else:
         ui.error(f"'{inst.name}' does not look like a stemcell with update.py or main.py.")
         sys.exit(1)

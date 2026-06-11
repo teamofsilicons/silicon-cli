@@ -17,7 +17,7 @@ import tempfile
 from pathlib import Path
 
 from . import interface_cli, registry, ui
-from .config import STEMCELL_GIT_URL, STEMCELL_ZIP_URL, python_run_cmd
+from .config import STEMCELL_GIT_URL, STEMCELL_ZIP_URL, base_python_cmd, python_run_cmd, venv_python
 
 SKIP_NAMES = {".git", "__pycache__", ".DS_Store"}
 PRESERVE_ROOT = {"env.py", "silicon.json", ".glass.json"}
@@ -88,6 +88,58 @@ def _choose_brain_order(primary: str) -> list[str]:
     if ui.confirm(f"Use {fallback} as fallback brain for all workers?", default_yes=True):
         return [primary, fallback]
     return [primary]
+
+
+def _ensure_venv(dst: Path) -> str | None:
+    """Create <dst>/.venv if missing. Returns its interpreter, or None.
+
+    Returns None when the venv can't be created — e.g. Debian/Ubuntu without
+    python3-venv, where ensurepip is stripped from the system interpreter.
+    """
+    existing = venv_python(dst)
+    if existing:
+        return existing
+    r = subprocess.run([base_python_cmd(), "-m", "venv", str(dst / ".venv")],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        shutil.rmtree(dst / ".venv", ignore_errors=True)
+        return None
+    return venv_python(dst)
+
+
+def install_requirements(dst: Path, req: Path) -> None:
+    """Install the silicon's requirements, preferring an instance-local venv.
+
+    System interpreters are commonly externally managed (PEP 668), so a plain
+    `pip install` is refused. Try, in order: the silicon's own .venv, plain
+    pip, `--user`, `--break-system-packages`. A failure here must abort the
+    hydration — a silicon without its dependencies starts but never completes
+    its Glass handshake.
+    """
+    ui.info("Installing Python dependencies...")
+    vpy = _ensure_venv(dst)
+    if vpy:
+        r = subprocess.run([vpy, "-m", "pip", "install", "-r", str(req), "--quiet"])
+        if r.returncode == 0:
+            return
+        ui.warn("Install into the silicon's venv failed; falling back to the system interpreter.")
+        # A half-provisioned venv must not survive: python_run_cmd() would
+        # prefer it over the system interpreter that gets the deps below.
+        shutil.rmtree(dst / ".venv", ignore_errors=True)
+    py = base_python_cmd()
+    last = None
+    for extra in ([], ["--user"], ["--break-system-packages"]):
+        last = subprocess.run([py, "-m", "pip", "install", "-r", str(req), "--quiet", *extra],
+                              capture_output=True, text=True)
+        if last.returncode == 0:
+            return
+    if last is not None and last.stderr:
+        sys.stderr.write(last.stderr)
+    ui.error("Could not install Python dependencies — this silicon would start but never "
+             "complete its Glass handshake, so hydration was aborted.")
+    ui.info("On Debian/Ubuntu, install venv support and retry:  sudo apt install python3-venv")
+    ui.info("Or point SILICON_PYTHON at an interpreter that allows pip installs.")
+    sys.exit(1)
 
 
 def hydrate(target: str, setup_config=None) -> None:
@@ -166,10 +218,7 @@ def hydrate(target: str, setup_config=None) -> None:
         # Install dependencies
         req = dst / "requirements.txt"
         if req.exists():
-            ui.info("Installing Python dependencies...")
-            r = subprocess.run([python_run_cmd(), "-m", "pip", "install", "-r", str(req), "--quiet"])
-            if r.returncode != 0:
-                subprocess.run([python_run_cmd(), "-m", "pip", "install", "-r", str(req), "--quiet", "--user"])
+            install_requirements(dst, req)
 
         registry.register(name, abs_target)
         interface_cli.setup(abs_target)

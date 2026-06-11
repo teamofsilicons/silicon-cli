@@ -45,7 +45,7 @@ def start(path: str) -> None:
         return
     log = open(Path(path) / ".glass_agent.log", "a")
     proc = subprocess.Popen(
-        [python_run_cmd(), "-u", "glass_agent.py"], cwd=path,
+        [python_run_cmd(path), "-u", "glass_agent.py"], cwd=path,
         stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
     )
     _pid_file(path).write_text(str(proc.pid))

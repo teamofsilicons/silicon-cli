@@ -61,7 +61,7 @@ def cmd_status(target: str | None) -> None:
 def cmd_browser(target: str | None) -> None:
     inst = registry.resolve_one(target)
     ui.info(f"Opening browser for '{inst.name}'...")
-    subprocess.run([python_run_cmd(), "main.py", "browser"], cwd=inst.path)
+    subprocess.run([python_run_cmd(inst.path), "main.py", "browser"], cwd=inst.path)
 
 
 def cmd_debug(target: str | None) -> None:

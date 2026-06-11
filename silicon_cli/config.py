@@ -41,6 +41,29 @@ SILICON_INTERFACE_DAEMON_SKIP = os.environ.get("SILICON_INTERFACE_DAEMON_SKIP", 
 }
 
 
-def python_run_cmd() -> str:
-    """The interpreter used to RUN a silicon's main.py (not this CLI's venv)."""
+def venv_python(path: str | os.PathLike) -> str | None:
+    """The silicon's own .venv interpreter, if one exists."""
+    sub = "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    cand = Path(path) / ".venv" / sub
+    return str(cand) if cand.exists() else None
+
+
+def base_python_cmd() -> str:
+    """The interpreter used to CREATE a silicon's venv (not this CLI's venv)."""
     return os.environ.get("SILICON_PYTHON") or shutil.which("python3") or shutil.which("python") or "python3"
+
+
+def python_run_cmd(path: str | os.PathLike | None = None) -> str:
+    """The interpreter used to RUN a silicon's code (not this CLI's venv).
+
+    SILICON_PYTHON always wins; otherwise prefer the silicon's own .venv —
+    system interpreters are often externally managed (PEP 668) and never
+    received the silicon's dependencies.
+    """
+    if os.environ.get("SILICON_PYTHON"):
+        return os.environ["SILICON_PYTHON"]
+    if path:
+        venv = venv_python(path)
+        if venv:
+            return venv
+    return shutil.which("python3") or shutil.which("python") or "python3"

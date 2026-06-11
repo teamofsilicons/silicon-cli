@@ -92,7 +92,7 @@ def watchdog_loop(name: str, path: str, pid_file: str) -> None:
     log_file = Path(path) / ".silicon.log"
     main_py = str(Path(path) / "main.py")
     stop_file = Path(path) / ".silicon.stop"
-    py = python_run_cmd()
+    py = python_run_cmd(path)
     child: subprocess.Popen | None = None
 
     def _terminate(signum=None, frame=None):

@@ -15,12 +15,12 @@ CLI_SOURCE_FILE = REGISTRY_DIR / "cli-source"  # where `silicon script update` r
 GLASS_SERVER_URL = os.environ.get("GLASS_SERVER_URL", "https://glass.teamofsilicons.com").rstrip("/")
 
 # Stemcell — the base every new silicon is hydrated from.
-STEMCELL_REPO = os.environ.get("SILICON_STEMCELL_REPO", "unlikefraction/silicon-stemcell")
+STEMCELL_REPO = os.environ.get("SILICON_STEMCELL_REPO", "teamofsilicons/silicon-stemcell")
 STEMCELL_GIT_URL = f"https://github.com/{STEMCELL_REPO}.git"
 STEMCELL_ZIP_URL = f"https://github.com/{STEMCELL_REPO}/archive/refs/heads/main.zip"
 
 # Glass CLI (used by pull/push for backups).
-GLASS_CLI_REPO = os.environ.get("SILICON_GLASS_CLI_REPO", "unlikefraction/glass")
+GLASS_CLI_REPO = os.environ.get("SILICON_GLASS_CLI_REPO", "teamofsilicons/glass")
 
 # Silicon Interface CLI. During local development, silicon-cli will auto-detect
 # a sibling silicon-interface checkout; in production this package spec is used.

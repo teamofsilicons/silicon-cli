@@ -133,14 +133,16 @@ if [ "${1:-}" = "auth" ]; then
   cd "$HOME"
   if [ "$provider" = "codex" ]; then
     log "Codex login uses the shared VM auth home: $HOME"
-    codex login || true
+    printf '\nUsing Codex device auth for remote/headless server compatibility.\n'
+    printf 'Follow the device-code instructions below. When sign-in is done, type `exit` to return to silicon.\n\n'
+    codex login --device-auth || true
   elif [ "$provider" = "claude" ]; then
     log "Claude Code uses the shared VM auth home: $HOME"
     printf '\nRun `claude` in this shell and complete the sign-in flow.\n'
     printf 'When sign-in is done, type `exit` to return to silicon.\n\n'
   else
     log "Shared auth shell: $HOME"
-    printf '\nRun `claude` and/or `codex login` here.\n'
+    printf '\nRun `claude` and/or `codex login --device-auth` here.\n'
     printf 'When sign-in is done, type `exit` to return to silicon.\n\n'
   fi
   exec "${SHELL:-/bin/bash}"

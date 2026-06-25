@@ -118,6 +118,9 @@ silicon docker login codex  # Codex only
 silicon docker login all    # both
 ```
 
+Codex login uses `codex login --device-auth` inside the runtime container so it
+works on remote/headless servers without browser port forwarding.
+
 To use those same shared accounts directly from the VM without installing Claude
 or Codex on the host:
 

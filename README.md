@@ -92,6 +92,11 @@ config, and the runtime image. When Docker is missing on Linux, it can install
 Docker Engine through Docker's official `get.docker.com` installer, start the
 daemon, and continue.
 
+`silicon pull`, `silicon docker bootstrap`, and `silicon docker doctor` refresh
+the configured runtime image with `docker pull` even when a local `latest` image
+already exists. If the refresh fails but a cached image is available, the CLI
+continues with the cached image and tells you to rerun `silicon docker doctor`.
+
 ```bash
 pip install silicon-cli
 silicon pull sct_live_...

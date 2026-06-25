@@ -384,14 +384,22 @@ def _ensure_daemon(config: dict) -> dict:
     sys.exit(1)
 
 
-def _ensure_image(config: dict) -> None:
+def _ensure_image(config: dict, *, refresh: bool = False) -> None:
     image = config.get("image") or DEFAULT_IMAGE
-    inspect = _cmd([*_docker_cmd(config), "image", "inspect", image])
-    if inspect.returncode == 0:
+
+    def local_image_exists() -> bool:
+        return _cmd([*_docker_cmd(config), "image", "inspect", image]).returncode == 0
+
+    if not refresh and local_image_exists():
         return
-    ui.info(f"Pulling Silicon runtime image: {image}")
+
+    ui.info(f"{'Refreshing' if refresh else 'Pulling'} Silicon runtime image: {image}")
     pulled = _run([*_docker_cmd(config), "pull", image])
     if pulled.returncode == 0:
+        return
+    if refresh and local_image_exists():
+        ui.warn(f"Could not refresh Docker image: {image}")
+        ui.info("Using the cached local image. Rerun `silicon docker doctor` to retry the refresh.")
         return
     ui.error(f"Could not pull Docker image: {image}")
     ui.info("If this is a private or not-yet-published image, build or login first, then rerun the same command.")
@@ -407,6 +415,7 @@ def ensure_ready(
     pull_image: bool = True,
     root: str | None = None,
     image: str | None = None,
+    refresh_image: bool = False,
     quiet: bool = False,
 ) -> dict:
     """Make Docker usable for Silicon commands, installing/initializing when allowed."""
@@ -444,7 +453,7 @@ def ensure_ready(
         render_compose(cfg)
 
     if pull_image:
-        _ensure_image(cfg)
+        _ensure_image(cfg, refresh=refresh_image)
     return cfg
 
 
@@ -605,7 +614,7 @@ def ensure_pull_runtime() -> bool:
     if runtime_opted_out():
         ui.info("SILICON_RUNTIME is set to local/host; pulling without Docker runtime.")
         return False
-    cfg = ensure_ready(auto_init=True, install=True, pull_image=True)
+    cfg = ensure_ready(auto_init=True, install=True, pull_image=True, refresh_image=True)
     maybe_prompt_login(cfg)
     return True
 
@@ -804,7 +813,7 @@ def cmd_docker(args: list[str]) -> None:
     sub = args[0] if args else "status"
     if sub in {"init", "bootstrap", "doctor"}:
         root, image, shared_home = parse_init_args(args[1:])
-        cfg = ensure_ready(auto_init=True, install=True, pull_image=True, root=root, image=image)
+        cfg = ensure_ready(auto_init=True, install=True, pull_image=True, refresh_image=True, root=root, image=image)
         if shared_home:
             init(cfg["root"], cfg["image"], shared_home=shared_home, docker_sudo=bool(cfg.get("docker_sudo")))
         if sub == "doctor":

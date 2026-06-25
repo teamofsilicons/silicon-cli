@@ -189,8 +189,8 @@ class DockerRuntimeTests(unittest.TestCase):
         def fake_compose(config):
             calls.append(("compose", config["docker_sudo"]))
 
-        def fake_image(config):
-            calls.append(("image", config["image"]))
+        def fake_image(config, *, refresh=False):
+            calls.append(("image", config["image"], refresh))
 
         docker_runtime._ensure_docker_binary = fake_binary
         docker_runtime._ensure_daemon = fake_daemon
@@ -213,7 +213,87 @@ class DockerRuntimeTests(unittest.TestCase):
         self.assertEqual(cfg["image"], "example/silicon:latest")
         self.assertEqual(cfg["shared_home"], str((self.root / "silicons" / ".shared-home").resolve()))
         self.assertTrue(Path(cfg["compose_file"]).exists())
-        self.assertIn(("image", "example/silicon:latest"), calls)
+        self.assertIn(("image", "example/silicon:latest", False), calls)
+
+    def test_ensure_ready_can_refresh_existing_runtime_image(self):
+        calls = []
+        old_binary = docker_runtime._ensure_docker_binary
+        old_daemon = docker_runtime._ensure_daemon
+        old_compose = docker_runtime._ensure_compose
+        old_image = docker_runtime._ensure_image
+
+        docker_runtime._ensure_docker_binary = lambda install: calls.append(("binary", install))
+        docker_runtime._ensure_daemon = lambda config: config
+        docker_runtime._ensure_compose = lambda config: calls.append(("compose", config["image"]))
+
+        def fake_image(config, *, refresh=False):
+            calls.append(("image", config["image"], refresh))
+
+        docker_runtime._ensure_image = fake_image
+        try:
+            docker_runtime.ensure_ready(
+                auto_init=True,
+                root=str(self.root / "silicons"),
+                image="example/silicon:latest",
+                refresh_image=True,
+            )
+        finally:
+            docker_runtime._ensure_docker_binary = old_binary
+            docker_runtime._ensure_daemon = old_daemon
+            docker_runtime._ensure_compose = old_compose
+            docker_runtime._ensure_image = old_image
+
+        self.assertIn(("image", "example/silicon:latest", True), calls)
+
+    def test_refresh_runtime_image_pulls_even_when_cached(self):
+        cfg = self.write_docker_config()
+        calls = []
+        old_cmd = docker_runtime._cmd
+        old_run = docker_runtime._run
+
+        def fake_cmd(cmd):
+            calls.append(("cmd", cmd))
+            return SimpleNamespace(returncode=0)
+
+        def fake_run(cmd, *, check=False, capture=False):
+            calls.append(("run", cmd))
+            return SimpleNamespace(returncode=0)
+
+        docker_runtime._cmd = fake_cmd
+        docker_runtime._run = fake_run
+        try:
+            docker_runtime._ensure_image(cfg, refresh=True)
+        finally:
+            docker_runtime._cmd = old_cmd
+            docker_runtime._run = old_run
+
+        self.assertEqual(calls[0][0], "run")
+        self.assertEqual(calls[0][1], ["docker", "pull", "example/silicon:latest"])
+
+    def test_refresh_runtime_image_uses_cache_when_pull_fails(self):
+        cfg = self.write_docker_config()
+        calls = []
+        old_cmd = docker_runtime._cmd
+        old_run = docker_runtime._run
+
+        def fake_cmd(cmd):
+            calls.append(("cmd", cmd))
+            return SimpleNamespace(returncode=0)
+
+        def fake_run(cmd, *, check=False, capture=False):
+            calls.append(("run", cmd))
+            return SimpleNamespace(returncode=1)
+
+        docker_runtime._cmd = fake_cmd
+        docker_runtime._run = fake_run
+        try:
+            docker_runtime._ensure_image(cfg, refresh=True)
+        finally:
+            docker_runtime._cmd = old_cmd
+            docker_runtime._run = old_run
+
+        self.assertEqual(calls[0][0], "run")
+        self.assertEqual(calls[1][0], "cmd")
 
     def test_pull_runtime_can_be_opted_out(self):
         os.environ["SILICON_RUNTIME"] = "local"

@@ -7,11 +7,26 @@ import sys
 import tempfile
 from pathlib import Path
 
-from . import process, registry, stemcell, ui
+from . import docker_runtime, process, registry, stemcell, ui
 from .config import CLI_SOURCE_FILE, python_run_cmd
 
 
 def update_instance(target: str | None) -> None:
+    if target and registry.is_multi_target(target):
+        names = registry.resolve_targets(target)
+        docker_names = [n for n in names if (registry.find(n) and registry.find(n).is_docker)]
+        if names and len(docker_names) == len(names):
+            if target == "all" and not ui.confirm(f"Are you sure you want to update: {', '.join(names)}?"):
+                return
+            for n in names:
+                _update_one(n, "", "", multi=True)
+            return
+    else:
+        inst = registry.resolve_one(target) if target or registry.find() or registry.count() == 1 else None
+        if inst and inst.is_docker:
+            _update_one(inst.name, "", "", multi=False)
+            return
+
     if shutil.which("git") is None:
         ui.warn("git not found — some non-conflicting merges may be skipped.")
 
@@ -41,6 +56,14 @@ def update_instance(target: str | None) -> None:
 
 def _update_one(target: str | None, tmp_src: str, updater: str, multi: bool) -> None:
     inst = registry.resolve_one(target)
+    if inst.is_docker:
+        ui.info(f"Updating Docker-managed '{inst.name}' inside the runtime image...")
+        code = docker_runtime.run_silicon(inst, ["update", inst.name])
+        if code == 0:
+            return
+        if not multi:
+            sys.exit(code)
+        return
     if process.is_running(inst.pid_file):
         msg = f"'{inst.name}' is running. Stop it first with: silicon stop {inst.name}"
         if multi:
@@ -85,6 +108,11 @@ def update_cli() -> None:
 def trigger_update_check(target: str | None) -> None:
     """Trigger the local stemcell's Glass system-version check now."""
     inst = registry.resolve_one(target)
+    if inst.is_docker:
+        code = docker_runtime.run_silicon(inst, ["update-check", inst.name])
+        if code == 0:
+            return
+        sys.exit(code)
     root = Path(inst.path)
     updater = root / "update.py"
     main_py = root / "main.py"

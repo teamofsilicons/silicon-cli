@@ -21,6 +21,15 @@ class Install:
     name: str
     path: str
     pid_file: str
+    runtime: str = "local"
+    service: str = ""
+    compose_file: str = ""
+    image: str = ""
+    container_name: str = ""
+
+    @property
+    def is_docker(self) -> bool:
+        return self.runtime == "docker"
 
 
 def _load() -> dict:
@@ -41,7 +50,17 @@ def installs() -> list[Install]:
     reg = _load()
     out = []
     for i, inst in enumerate(reg.get("installations", [])):
-        out.append(Install(i, inst["name"], inst["path"], inst.get("pid_file", "")))
+        out.append(Install(
+            i,
+            inst["name"],
+            inst["path"],
+            inst.get("pid_file", ""),
+            inst.get("runtime", "local"),
+            inst.get("service", ""),
+            inst.get("compose_file", ""),
+            inst.get("image", ""),
+            inst.get("container_name", ""),
+        ))
     return out
 
 
@@ -49,17 +68,60 @@ def count() -> int:
     return len(_load().get("installations", []))
 
 
-def register(name: str, path: str, pid_file: str | None = None) -> str:
+def register(
+    name: str,
+    path: str,
+    pid_file: str | None = None,
+    *,
+    runtime: str = "local",
+    service: str = "",
+    compose_file: str = "",
+    image: str = "",
+    container_name: str = "",
+    update_existing: bool = False,
+) -> str:
     """Add an installation. Returns 'added' or 'exists'."""
     path = str(Path(path))
     pid_file = pid_file or str(Path(path) / ".silicon.pid")
     reg = _load()
     for inst in reg.get("installations", []):
         if inst.get("path") == path or inst.get("name") == name:
+            if update_existing:
+                inst.update({
+                    "name": name,
+                    "path": path,
+                    "pid_file": pid_file,
+                    "runtime": runtime,
+                    "service": service,
+                    "compose_file": compose_file,
+                    "image": image,
+                    "container_name": container_name,
+                })
+                _save(reg)
+                return "updated"
             return "exists"
-    reg.setdefault("installations", []).append({"name": name, "path": path, "pid_file": pid_file})
+    reg.setdefault("installations", []).append({
+        "name": name,
+        "path": path,
+        "pid_file": pid_file,
+        "runtime": runtime,
+        "service": service,
+        "compose_file": compose_file,
+        "image": image,
+        "container_name": container_name,
+    })
     _save(reg)
     return "added"
+
+
+def update_install(name: str, **fields) -> bool:
+    reg = _load()
+    for inst in reg.get("installations", []):
+        if inst.get("name") == name:
+            inst.update(fields)
+            _save(reg)
+            return True
+    return False
 
 
 def name_taken(name: str) -> bool:
@@ -123,10 +185,10 @@ def pick() -> Install:
     if len(rows) == 1:
         return rows[0]
 
-    from .process import is_running
+    from .process import install_is_running
     sys.stderr.write(f"\n{ui.BOLD}Select a silicon instance:{ui.RESET}\n\n")
     for i in rows:
-        running = is_running(i.pid_file)
+        running = install_is_running(i)
         status = f"{ui.GREEN}● running{ui.RESET}" if running else f"{ui.DIM}○ stopped{ui.RESET}"
         sys.stderr.write(f"  {ui.BOLD}{i.index + 1}){ui.RESET} {i.name:<20} {status}  {ui.DIM}{i.path}{ui.RESET}\n")
     sys.stderr.write("\n")

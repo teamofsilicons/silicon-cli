@@ -15,7 +15,7 @@ import sys
 import time
 from pathlib import Path
 
-from . import glassagent, registry, ui
+from . import docker_runtime, glassagent, registry, ui
 from .config import python_run_cmd
 
 RESTART_DELAY = 5
@@ -47,6 +47,12 @@ def is_running(pid_file: str) -> bool:
         return _alive(int(pid))
     except ValueError:
         return False
+
+
+def install_is_running(inst: registry.Install) -> bool:
+    if inst.is_docker:
+        return docker_runtime.silicon_running(inst)
+    return is_running(inst.pid_file)
 
 
 def _floater_pids(path: str, skip: int | None = None) -> list[int]:
@@ -159,6 +165,9 @@ def _spawn_watchdog(name: str, path: str, pid_file: str) -> int:
 
 def start_one(target: str | None) -> None:
     inst = registry.resolve_one(target)
+    if inst.is_docker:
+        docker_runtime.start_one(inst)
+        return
     if is_running(inst.pid_file):
         ui.warn(f"'{inst.name}' is already running (PID {get_pid(inst.pid_file)})")
         glassagent.start(inst.path)
@@ -185,6 +194,9 @@ def start_one(target: str | None) -> None:
 
 def stop_one(target: str | None, full: bool = False) -> None:
     inst = registry.resolve_one(target)
+    if inst.is_docker:
+        docker_runtime.stop_one(inst, full=full)
+        return
     if not is_running(inst.pid_file):
         ui.warn(f"'{inst.name}' is not running")
         kill_floaters(inst.path)
@@ -253,6 +265,10 @@ def stop(target: str | None, full: bool = False) -> None:
 
 
 def restart(target: str | None) -> None:
+    inst = registry.resolve_one(target) if target and not registry.is_multi_target(target) else None
+    if inst and inst.is_docker:
+        docker_runtime.restart_one(inst)
+        return
     stop(target)
     time.sleep(1)
     start(target)

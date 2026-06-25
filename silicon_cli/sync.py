@@ -17,7 +17,7 @@ import webbrowser
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from . import process, registry, stemcell, ui
+from . import docker_runtime, process, registry, stemcell, ui
 from .config import GLASS_CLI_REPO, GLASS_SERVER_URL
 
 MANIFEST_NAME = ".backupsilicon"
@@ -370,7 +370,11 @@ def _choose_target(label: str, silicon_id: str) -> tuple[str, Path]:
         suffix = silicon_id[-6:].lower() if silicon_id else uuid_hex()[:6]
         name = f"{name}-{suffix}"
 
-    target = Path.cwd() / name
+    if docker_runtime.enabled():
+        base = Path(docker_runtime.load_config(required=True)["root"]).expanduser()
+    else:
+        base = Path.cwd()
+    target = base / name
     if not target.exists():
         return name, target
 
@@ -380,7 +384,7 @@ def _choose_target(label: str, silicon_id: str) -> tuple[str, Path]:
 
     while target.exists():
         name = ui.ask("Target folder name", f"{label}-{uuid_hex()[:6]}")
-        target = Path.cwd() / _safe_instance_name(name, "silicon")
+        target = base / _safe_instance_name(name, "silicon")
     return target.name, target
 
 
@@ -723,7 +727,15 @@ def _pull_team(api_key: str, server: str) -> None:
                 instance_name=instance_name,
                 provider_key_env=provider_key_env,
             )
-            stemcell.hydrate(str(target), setup_config=setup_configs.get(silicon_id))
+            stemcell.hydrate(
+                str(target),
+                setup_config=setup_configs.get(silicon_id),
+                install_deps=not docker_runtime.enabled(),
+                setup_interface=not docker_runtime.enabled(),
+                register_install=not docker_runtime.enabled(),
+            )
+            if docker_runtime.enabled():
+                docker_runtime.register_instance(instance_name, target)
             pulled.append((instance_name, target))
         except Exception:
             if target.exists() and not any(target.iterdir()):
@@ -761,6 +773,8 @@ def pull(api_token: str | None) -> None:
         ui.error("Usage: silicon pull <api_token>")
         sys.exit(1)
 
+    docker_runtime.ensure_pull_runtime()
+
     server = GLASS_SERVER_URL.rstrip("/")
     if api_key.startswith("sct_live_"):
         _pull_team(api_key, server)
@@ -791,7 +805,14 @@ def pull(api_token: str | None) -> None:
             instance_name=instance_name,
             provider_key_env=provider_key_env,
         )
-        stemcell.hydrate(str(target))
+        stemcell.hydrate(
+            str(target),
+            install_deps=not docker_runtime.enabled(),
+            setup_interface=not docker_runtime.enabled(),
+            register_install=not docker_runtime.enabled(),
+        )
+        if docker_runtime.enabled():
+            docker_runtime.register_instance(instance_name, target)
     except Exception:
         if target.exists() and not any(target.iterdir()):
             shutil.rmtree(target, ignore_errors=True)
@@ -829,6 +850,19 @@ def push(target: str | None, subcmd: str | None) -> None:
     if not (Path(inst.path) / ".glass.json").exists():
         ui.error(f"'{inst.name}' is not connected to Glass. No .glass.json found.")
         sys.exit(1)
+    if inst.is_docker:
+        args = ["push", inst.name]
+        if subcmd:
+            args.append(subcmd)
+        if subcmd != "now" and not docker_runtime.container_running(inst):
+            if subcmd == "stop":
+                ui.warn(f"'{inst.name}' container is not running.")
+                return
+            docker_runtime.start_one(inst)
+        code = docker_runtime.run_silicon(inst, args)
+        if code:
+            sys.exit(code)
+        return
     ensure_glass_cli()
     pid_file = Path(inst.path) / ".glass-push.pid"
 

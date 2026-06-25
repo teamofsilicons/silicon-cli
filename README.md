@@ -5,7 +5,7 @@ package is named `silicon-cli`, and the code lives here in this `silicon-cli`
 repo.
 
 The command manages silicon instances on a machine: create them from the
-[silicon-stemcell](https://github.com/unlikefraction/silicon-stemcell) base,
+[silicon-stemcell](https://github.com/teamofsilicons/silicon-stemcell) base,
 start/stop them under an auto-restart watchdog, stream logs, and back them up to
 Glass. It reads the same `~/.silicon/registry.json`, so existing installs carry
 over unchanged.
@@ -39,6 +39,14 @@ silicon push [name] [now|stop]   Daily 23:59 GMT backups to Glass (now = one-sho
 silicon backup [name] [now|stop] Alias for silicon push
 silicon update <target>      Update silicon(s) from the latest stemcell
 silicon list                 List all instances
+silicon docker init [--root ~/silicons] [--image teamofsilicons/silicon-runtime:latest]
+                             Install/check Docker and enable one-container-per-Silicon runtime
+silicon docker doctor        Check/repair Docker runtime setup
+silicon docker login [claude|codex|all]
+                             Set up shared Claude/Codex auth for Docker silicons
+silicon docker compose       Print generated Compose file path
+silicon claude [args...]     Run Claude Code with shared Docker auth
+silicon codex [args...]      Run Codex with shared Docker auth
 silicon script update        Update this CLI itself
 silicon help                 Show help
 ```
@@ -49,21 +57,117 @@ silicon help                 Show help
 | --- | --- | --- |
 | `SILICON_HOME` | `~/.silicon` | registry + CLI state |
 | `GLASS_SERVER_URL` | `https://glass.teamofsilicons.com` | Glass sync server (pull/push) |
-| `SILICON_STEMCELL_REPO` | `unlikefraction/silicon-stemcell` | base for `new` |
-| `SILICON_GLASS_CLI_REPO` | `unlikefraction/glass` | glass backup CLI |
+| `SILICON_STEMCELL_REPO` | `teamofsilicons/silicon-stemcell` | base for `new` |
+| `SILICON_GLASS_CLI_REPO` | `teamofsilicons/glass` | glass backup CLI |
 | `SILICON_PYTHON` | `python3` | interpreter used to run a silicon's `main.py` |
 | `SILICON_INTERFACE_CLI_PACKAGE` | `@teamofsilicons/silicon-interface-cli` | npm package used to install the Silicon Interface CLI |
 | `SILICON_INTERFACE_CLI_TARBALL` | versioned npm tarball | fallback package URL if registry metadata is briefly unavailable |
 | `SILICON_INTERFACE_CLI_SOURCE` | *(empty)* | local package dir or `silicon-interface.mjs` path for dev installs |
 | `SILICON_INTERFACE_CLI_SKIP` | *(empty)* | set to `1` to skip interface CLI setup |
 | `SILICON_INTERFACE_DAEMON_SKIP` | *(empty)* | set to `1` to install the CLI without starting its listener daemon |
+| `SILICON_RUNTIME` | *(empty)* | default pull uses Docker; set to `local` to opt out |
+| `SILICON_RUNTIME_IMAGE` | `teamofsilicons/silicon-runtime:latest` | runtime image for Docker-backed silicons |
+| `SILICON_DOCKER_ROOT` | `~/silicons` | Docker-backed instance root |
+| `SILICON_DOCKER_COMPOSE` | `<root>/compose.yml` | generated Compose file path |
+| `SILICON_DOCKER_SHARED_HOME` | `<root>/.shared-home` | VM-wide Claude/Codex auth home mounted into every container |
+| `SILICON_DOCKER_SUDO` | *(empty)* | set to `1` to run Docker commands through `sudo docker` |
+| `SILICON_DOCKER_AUTO_INSTALL` | *(empty)* | set to `1` to allow non-interactive Docker install attempts |
+
+## Docker runtime
+
+Docker mode keeps the existing `silicon` command but runs each Silicon in its own
+container. Mutable instance state lives on the host under `~/silicons/<name>` and
+is bind-mounted at `/silicon` inside the container. Provider secrets are still
+Glass-managed: the container stores only the Silicon's `.glass.json` key and the
+stemcell fetches provider keys from Glass on boot.
+
+Claude Code and Codex account state is shared across all Docker-backed silicons
+on the VM. The shared auth home defaults to `~/silicons/.shared-home` and is
+mounted into every container. During an interactive `silicon pull`, the CLI asks
+whether to set up Claude Code, Codex, or both before installing the team.
+
+On a fresh Linux server, the host only needs Python and this CLI. `silicon pull`
+checks Docker Engine, Docker Compose v2, the daemon, current-user access, runtime
+config, and the runtime image. When Docker is missing on Linux, it can install
+Docker Engine through Docker's official `get.docker.com` installer, start the
+daemon, and continue.
+
+```bash
+pip install silicon-cli
+silicon pull sct_live_...
+```
+
+To run the same checks explicitly:
+
+```bash
+silicon docker bootstrap --root ~/silicons --image teamofsilicons/silicon-runtime:latest
+silicon docker doctor
+```
+
+To set up or repair shared Claude/Codex login manually:
+
+```bash
+silicon docker login        # asks which accounts to set up
+silicon docker login claude # Claude Code only
+silicon docker login codex  # Codex only
+silicon docker login all    # both
+```
+
+To use those same shared accounts directly from the VM without installing Claude
+or Codex on the host:
+
+```bash
+silicon claude
+silicon codex
+silicon claude --version
+silicon codex --version
+```
+
+The runtime image contains the Silicon runtime dependencies: Python tooling, git,
+Node, Silicon Browser, Silicon Interface CLI, Claude Code, and Codex. Each
+container creates `/silicon/.venv` and installs that Silicon's `requirements.txt`
+inside the mounted instance folder, so per-Silicon Python dependencies do not
+pollute the host.
+
+To force the older host-local install path:
+
+```bash
+SILICON_RUNTIME=local silicon pull sct_live_...
+```
+
+After that, the normal commands continue to work:
+
+```bash
+silicon list
+silicon start all
+silicon stop ada          # stops the Silicon process; container stays up
+silicon stop --full ada   # stops the container
+silicon debug ada
+silicon update ada
+silicon backup ada now
+```
+
+The generated Compose file is written to `~/silicons/compose.yml`. You can inspect
+it with:
+
+```bash
+silicon docker compose
+```
+
+Build the runtime image from this repo:
+
+```bash
+docker build -f docker/runtime/Dockerfile -t teamofsilicons/silicon-runtime:latest .
+```
 
 ## Silicon Interface CLI
 
-`silicon new`, `silicon install`, and `silicon pull` also set up the
-Silicon Interface CLI in the silicon folder when Node 22+ is available.
-When a Glass `.glass.json` is present, setup also starts the background listener
-daemon so the silicon receives live conversation frames without polling.
+For Docker-backed installs, the Silicon Interface CLI is installed inside the
+runtime image/container. For host-local installs, `silicon new`, `silicon install`,
+and `silicon pull` set up the Silicon Interface CLI in the silicon folder when
+Node 22+ is available. When a Glass `.glass.json` is present, setup also starts
+the background listener daemon so the silicon receives live conversation frames
+without polling.
 
 `silicon pull` is token-native. Generate a team setup token from Glass >
 Silicons > Team setup token, then run:
@@ -78,8 +182,8 @@ silicon pull sct_live_...
 
 The command validates the token with Glass, mints one local silicon API key per
 team silicon, creates one folder per silicon, hydrates the stemcell, writes
-`.glass.json`, `.env`, and `env.py`, registers each instance, starts each
-Silicon Interface daemon, and starts each silicon process.
+`.glass.json`, `.env`, and `env.py`, registers each instance, regenerates Compose
+for Docker-backed installs, and starts each silicon process.
 
 During team pull, setup asks for the default brain/fallback settings once. You
 can apply those settings to every silicon, or select specific silicons that

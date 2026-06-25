@@ -142,7 +142,14 @@ def install_requirements(dst: Path, req: Path) -> None:
     sys.exit(1)
 
 
-def hydrate(target: str, setup_config=None) -> None:
+def hydrate(
+    target: str,
+    setup_config=None,
+    *,
+    install_deps: bool = True,
+    setup_interface: bool = True,
+    register_install: bool = True,
+) -> None:
     abs_target = str(Path(target).resolve())
     os.makedirs(abs_target, exist_ok=True)
     dst = Path(abs_target)
@@ -217,11 +224,13 @@ def hydrate(target: str, setup_config=None) -> None:
 
         # Install dependencies
         req = dst / "requirements.txt"
-        if req.exists():
+        if install_deps and req.exists():
             install_requirements(dst, req)
 
-        registry.register(name, abs_target)
-        interface_cli.setup(abs_target)
+        if register_install:
+            registry.register(name, abs_target)
+        if setup_interface:
+            interface_cli.setup(abs_target)
         ui.success(f"Hydrated '{name}' at {abs_target}")
         ui.info(f"Run 'silicon start {name}' when you're ready.")
     finally:

@@ -5,12 +5,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-from . import glassagent, process, registry, stemcell, sync, ui, update
+from . import docker_runtime, glassagent, process, registry, stemcell, sync, ui, update
 from .config import python_run_cmd
 
 COMMANDS = ["start", "stop", "restart", "status", "browser", "debug", "attach",
             "pull", "push", "backup", "update", "update-check", "check-update",
-            "browser-profile", "list", "install", "new", "help", "script", "agent"]
+            "browser-profile", "list", "install", "new", "help", "script", "agent",
+            "docker", "claude", "codex"]
 
 
 # ----------------------------------------------------------------- commands
@@ -24,17 +25,21 @@ def cmd_list() -> None:
     print(f"  {ui.DIM}{'#':<4}{'NAME':<22}{'STATUS':<10}PATH{ui.RESET}")
     print(f"  {ui.DIM}{'---':<4}{'----':<22}{'------':<10}----{ui.RESET}")
     for i in rows:
-        if process.is_running(i.pid_file):
+        if process.install_is_running(i):
             pid = process.get_pid(i.pid_file)
             status = f"{ui.GREEN}● running{ui.RESET}"
-            extra = f" {ui.DIM}(PID {pid}){ui.RESET}"
+            extra = f" {ui.DIM}(Docker){ui.RESET}" if i.is_docker else f" {ui.DIM}(PID {pid}){ui.RESET}"
         else:
-            status, extra = f"{ui.DIM}○ stopped{ui.RESET}", ""
+            status = f"{ui.DIM}○ stopped{ui.RESET}"
+            extra = f" {ui.DIM}(Docker){ui.RESET}" if i.is_docker else ""
         print(f"  {i.index + 1:<4}{i.name:<22}{status}{extra}  {ui.DIM}{i.path}{ui.RESET}")
     print()
 
 
 def _print_status(inst) -> None:
+    if inst.is_docker:
+        docker_runtime.print_status(inst)
+        return
     if process.is_running(inst.pid_file):
         pid = process.get_pid(inst.pid_file)
         print(f"\n{ui.BOLD}{inst.name}{ui.RESET} {ui.GREEN}● running{ui.RESET} (PID {pid})")
@@ -60,13 +65,19 @@ def cmd_status(target: str | None) -> None:
 
 def cmd_browser(target: str | None) -> None:
     inst = registry.resolve_one(target)
+    if inst.is_docker:
+        docker_runtime.run_silicon(inst, ["browser", inst.name])
+        return
     ui.info(f"Opening browser for '{inst.name}'...")
     subprocess.run([python_run_cmd(inst.path), "main.py", "browser"], cwd=inst.path)
 
 
 def cmd_debug(target: str | None) -> None:
     inst = registry.resolve_one(target)
-    if not process.is_running(inst.pid_file):
+    if inst.is_docker:
+        docker_runtime.debug(inst)
+        return
+    if not process.install_is_running(inst):
         ui.error(f"'{inst.name}' is not running. Start it first with: silicon start {inst.name}")
         sys.exit(1)
     log_file = Path(inst.path) / ".silicon.log"
@@ -121,6 +132,11 @@ def cmd_agent(subcmd: str | None, target: str | None) -> None:
         ui.error("Usage: silicon agent <start|stop|status> [name]")
         sys.exit(1)
     inst = registry.resolve_one(target)
+    if inst.is_docker:
+        code = docker_runtime.run_silicon(inst, ["agent", subcmd, inst.name])
+        if code:
+            sys.exit(code)
+        return
     if subcmd == "start":
         glassagent.start(inst.path)
     elif subcmd == "stop":
@@ -137,6 +153,28 @@ def cmd_agent(subcmd: str | None, target: str | None) -> None:
 
 
 def cmd_new(target: str | None) -> None:
+    if docker_runtime.enabled():
+        docker_runtime.ensure_ready(auto_init=False, install=True, pull_image=True, quiet=True)
+        docker_target = docker_runtime.target_path(target)
+        stemcell.hydrate(
+            str(docker_target),
+            install_deps=False,
+            setup_interface=False,
+            register_install=False,
+        )
+        name = docker_target.name
+        sj = docker_target / "silicon.json"
+        if sj.exists():
+            import json
+
+            try:
+                data = json.loads(sj.read_text())
+                name = (data.get("address") or data.get("name") or name).strip() or name
+            except Exception:
+                pass
+        docker_runtime.register_instance(name, docker_target)
+        ui.info(f"Run 'silicon start {name}' when you're ready.")
+        return
     if target:
         stemcell.hydrate(target)
         return
@@ -178,6 +216,11 @@ def cmd_help() -> None:
   silicon update check [name] Trigger this silicon's system update check now
   silicon update-check [name] Trigger this silicon's system update check now
   silicon list                List all instances
+  silicon docker init         Install/check Docker and enable Docker-backed installs
+  silicon docker doctor       Repair/check Docker runtime setup
+  silicon docker login        Set up shared Claude/Codex auth for Docker silicons
+  silicon claude [args...]    Run Claude Code with shared Docker auth
+  silicon codex [args...]     Run Codex with shared Docker auth
   silicon script update       Update the silicon CLI itself
   silicon install             Install a new instance
   silicon help                Show this help
@@ -238,6 +281,10 @@ def main(argv: list[str] | None = None) -> None:
             sys.exit(1)
     elif cmd == "debug":
         cmd_debug(a1)
+    elif cmd == "docker":
+        docker_runtime.cmd_docker(argv[1:])
+    elif cmd in ("claude", "codex"):
+        docker_runtime.run_shared_tool(cmd, argv[1:])
     elif cmd == "attach":
         cmd_attach(a1)
     elif cmd == "pull":

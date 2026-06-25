@@ -18,7 +18,7 @@ from .config import REGISTRY_DIR
 
 CONFIG_FILE = REGISTRY_DIR / "docker.json"
 DEFAULT_ROOT = Path.home() / "silicons"
-DEFAULT_IMAGE = "teamofsilicons/silicon-runtime:latest"
+DEFAULT_IMAGE = "ghcr.io/teamofsilicons/silicon-runtime:latest"
 CONTAINER_PATH = "/silicon"
 CONTAINER_SHARED_HOME = "/silicon-shared-home"
 DOCKER_INSTALL_URL = "https://get.docker.com"
@@ -395,8 +395,8 @@ def _ensure_image(config: dict) -> None:
         return
     ui.error(f"Could not pull Docker image: {image}")
     ui.info("If this is a private or not-yet-published image, build or login first, then rerun the same command.")
-    ui.info("  docker login")
-    ui.info("  docker build -f docker/runtime/Dockerfile -t teamofsilicons/silicon-runtime:latest .")
+    ui.info("  docker login ghcr.io")
+    ui.info(f"  docker build -f docker/runtime/Dockerfile -t {DEFAULT_IMAGE} .")
     sys.exit(pulled.returncode or 1)
 
 

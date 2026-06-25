@@ -39,7 +39,7 @@ silicon push [name] [now|stop]   Daily 23:59 GMT backups to Glass (now = one-sho
 silicon backup [name] [now|stop] Alias for silicon push
 silicon update <target>      Update silicon(s) from the latest stemcell
 silicon list                 List all instances
-silicon docker init [--root ~/silicons] [--image teamofsilicons/silicon-runtime:latest]
+silicon docker init [--root ~/silicons] [--image ghcr.io/teamofsilicons/silicon-runtime:latest]
                              Install/check Docker and enable one-container-per-Silicon runtime
 silicon docker doctor        Check/repair Docker runtime setup
 silicon docker login [claude|codex|all]
@@ -66,7 +66,7 @@ silicon help                 Show help
 | `SILICON_INTERFACE_CLI_SKIP` | *(empty)* | set to `1` to skip interface CLI setup |
 | `SILICON_INTERFACE_DAEMON_SKIP` | *(empty)* | set to `1` to install the CLI without starting its listener daemon |
 | `SILICON_RUNTIME` | *(empty)* | default pull uses Docker; set to `local` to opt out |
-| `SILICON_RUNTIME_IMAGE` | `teamofsilicons/silicon-runtime:latest` | runtime image for Docker-backed silicons |
+| `SILICON_RUNTIME_IMAGE` | `ghcr.io/teamofsilicons/silicon-runtime:latest` | runtime image for Docker-backed silicons |
 | `SILICON_DOCKER_ROOT` | `~/silicons` | Docker-backed instance root |
 | `SILICON_DOCKER_COMPOSE` | `<root>/compose.yml` | generated Compose file path |
 | `SILICON_DOCKER_SHARED_HOME` | `<root>/.shared-home` | VM-wide Claude/Codex auth home mounted into every container |
@@ -100,7 +100,7 @@ silicon pull sct_live_...
 To run the same checks explicitly:
 
 ```bash
-silicon docker bootstrap --root ~/silicons --image teamofsilicons/silicon-runtime:latest
+silicon docker bootstrap --root ~/silicons --image ghcr.io/teamofsilicons/silicon-runtime:latest
 silicon docker doctor
 ```
 
@@ -157,7 +157,7 @@ silicon docker compose
 Build the runtime image from this repo:
 
 ```bash
-docker build -f docker/runtime/Dockerfile -t teamofsilicons/silicon-runtime:latest .
+docker build -f docker/runtime/Dockerfile -t ghcr.io/teamofsilicons/silicon-runtime:latest .
 ```
 
 ## Silicon Interface CLI

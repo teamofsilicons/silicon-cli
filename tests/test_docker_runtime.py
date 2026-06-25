@@ -60,6 +60,11 @@ class DockerRuntimeTests(unittest.TestCase):
         docker_runtime.CONFIG_FILE.write_text(json.dumps(cfg))
         return cfg
 
+    def test_default_runtime_image_uses_published_registry(self):
+        cfg = docker_runtime.load_config()
+
+        self.assertEqual(cfg["image"], "ghcr.io/teamofsilicons/silicon-runtime:latest")
+
     def test_legacy_registry_rows_load_as_local(self):
         registry.REGISTRY_FILE.parent.mkdir(parents=True, exist_ok=True)
         registry.REGISTRY_FILE.write_text(json.dumps({

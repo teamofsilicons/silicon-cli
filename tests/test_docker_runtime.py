@@ -172,6 +172,32 @@ class DockerRuntimeTests(unittest.TestCase):
 
         self.assertEqual(captured["cmd"][:2], ["sudo", "docker"])
 
+    def test_exec_args_use_container_runtime_home(self):
+        self.write_docker_config()
+        inst = registry.Install(
+            0,
+            "ada",
+            str(self.root / "silicons" / "ada"),
+            str(self.root / "silicons" / "ada" / ".silicon.pid"),
+            "docker",
+            "silicon-ada",
+            str(self.root / "silicons" / "compose.yml"),
+            "example/silicon:latest",
+            "silicon-ada",
+        )
+
+        cmd = docker_runtime._exec_args(inst, ["silicon", "start", "ada"])
+
+        self.assertEqual(cmd[:2], ["docker", "exec"])
+        self.assertIn("-w", cmd)
+        self.assertIn("/silicon", cmd)
+        self.assertIn("HOME=/silicon/.home", cmd)
+        self.assertIn("SILICON_HOME=/silicon/.home/.silicon", cmd)
+        self.assertIn("SILICON_BROWSER_HOME=/silicon/.silicon-browser", cmd)
+        self.assertIn("SILICON_CONTAINER_MODE=1", cmd)
+        self.assertIn("SILICON_SHARED_HOME=/silicon-shared-home", cmd)
+        self.assertEqual(cmd[-4:], ["silicon-ada", "silicon", "start", "ada"])
+
     def test_ensure_ready_auto_initializes_and_pulls_image(self):
         calls = []
         old_binary = docker_runtime._ensure_docker_binary

@@ -20,6 +20,7 @@ CONFIG_FILE = REGISTRY_DIR / "docker.json"
 DEFAULT_ROOT = Path.home() / "silicons"
 DEFAULT_IMAGE = "ghcr.io/teamofsilicons/silicon-runtime:latest"
 CONTAINER_PATH = "/silicon"
+CONTAINER_HOME = f"{CONTAINER_PATH}/.home"
 CONTAINER_SHARED_HOME = "/silicon-shared-home"
 DOCKER_INSTALL_URL = "https://get.docker.com"
 AUTH_FILE = ".silicon-auth.json"
@@ -638,7 +639,24 @@ def _compose_args(inst: registry.Install) -> list[str]:
 
 
 def _exec_args(inst: registry.Install, command: Iterable[str]) -> list[str]:
-    return [*_docker_cmd(config_for_install(inst)), "exec", inst.container_name or container_name(inst.name), *command]
+    return [
+        *_docker_cmd(config_for_install(inst)),
+        "exec",
+        "-w",
+        CONTAINER_PATH,
+        "-e",
+        f"HOME={CONTAINER_HOME}",
+        "-e",
+        f"SILICON_HOME={CONTAINER_HOME}/.silicon",
+        "-e",
+        f"SILICON_BROWSER_HOME={CONTAINER_PATH}/.silicon-browser",
+        "-e",
+        "SILICON_CONTAINER_MODE=1",
+        "-e",
+        f"SILICON_SHARED_HOME={CONTAINER_SHARED_HOME}",
+        inst.container_name or container_name(inst.name),
+        *command,
+    ]
 
 
 def container_running(inst: registry.Install) -> bool:

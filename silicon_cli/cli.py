@@ -14,6 +14,45 @@ COMMANDS = ["start", "stop", "restart", "status", "browser", "debug", "attach",
             "docker", "claude", "codex"]
 
 
+def _parse_pull_args(args: list[str]) -> tuple[str | None, sync.PullOpts]:
+    """Parse ``silicon pull [token] [flags]`` into (token, PullOpts).
+
+    Flags let Glass's setup agent drive the pull with no prompts:
+      -y/--yes            take every prompt's default
+      --brain B           claude | codex | both
+      --brain-order CSV   e.g. claude,codex
+      --backup/--no-backup enable/disable daily backups
+      --runtime R         docker | local (sets SILICON_RUNTIME)
+      --name NAME         instance name (single-silicon pull)
+    """
+    opts = sync.PullOpts()
+    token: str | None = None
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a in ("-y", "--yes"):
+            opts.assume_yes = True
+        elif a == "--brain" and i + 1 < len(args):
+            opts.brain = args[i + 1].strip().lower(); i += 1
+        elif a == "--brain-order" and i + 1 < len(args):
+            opts.brain_order = [b.strip().lower() for b in args[i + 1].split(",") if b.strip()]; i += 1
+        elif a == "--backup":
+            opts.backup = True
+        elif a == "--no-backup":
+            opts.backup = False
+        elif a == "--name" and i + 1 < len(args):
+            opts.name = args[i + 1].strip(); i += 1
+        elif a == "--runtime" and i + 1 < len(args):
+            rt = args[i + 1].strip().lower()
+            import os
+            os.environ["SILICON_RUNTIME"] = rt
+            i += 1
+        elif not a.startswith("-") and token is None:
+            token = a
+        i += 1
+    return token, opts
+
+
 # ----------------------------------------------------------------- commands
 def cmd_list() -> None:
     rows = registry.installs()
@@ -208,6 +247,9 @@ def cmd_help() -> None:
   silicon debug [name]        Attach to running instance (live logs)
   silicon attach [path]       Register an existing silicon instance
   silicon pull [api_token]    Pull a Glass team or silicon into local folders
+                              flags: -y/--yes --brain <claude|codex|both>
+                              --brain-order a,b --backup/--no-backup
+                              --runtime <docker|local> --name <name>
   silicon push [name]         Start daily 23:59 GMT backup loop to Glass
   silicon push [name] now     Push a one-time backup to Glass
   silicon push [name] stop    Stop the daily backup loop
@@ -288,7 +330,8 @@ def main(argv: list[str] | None = None) -> None:
     elif cmd == "attach":
         cmd_attach(a1)
     elif cmd == "pull":
-        sync.pull(a1)
+        token, opts = _parse_pull_args(argv[1:])
+        sync.pull(token, opts)
     elif cmd in ("push", "backup"):
         sync.push(a1, a2)
     elif cmd == "update":

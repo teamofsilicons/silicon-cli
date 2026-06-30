@@ -14,11 +14,37 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from . import docker_runtime, process, registry, stemcell, ui
 from .config import GLASS_CLI_REPO, GLASS_SERVER_URL
+
+
+@dataclass
+class PullOpts:
+    """Non-interactive answers for ``silicon pull``, so Glass's setup agent can
+    drive it headlessly over SSH. Any field left at its default falls back to the
+    old interactive behaviour (or the non-TTY default when not on a terminal)."""
+
+    assume_yes: bool = False        # take every prompt's default without asking
+    brain: str | None = None        # "claude" | "codex" | "both"
+    brain_order: list[str] = field(default_factory=list)
+    backup: bool | None = None      # None = ask/default; True/False = force
+    name: str | None = None         # instance name for a single-silicon pull
+
+    def setup_config_kwargs(self) -> dict:
+        """Brain overrides passed to ``stemcell.choose_setup_config``."""
+        order = list(self.brain_order)
+        brain = self.brain
+        if brain == "both" and not order:
+            order = ["claude", "codex"]
+            brain = "claude"
+        if brain in ("claude", "codex") and not order:
+            order = [brain]
+        return {"brain": brain if brain in ("claude", "codex") else None,
+                "brain_order": order or None}
 
 MANIFEST_NAME = ".backupsilicon"
 BACKUP_UPLOAD_PATH = "/api/v1/silicon-backups/"
@@ -104,6 +130,9 @@ def _manifest_path(path: str) -> Path:
 def _read_manifest(path: str) -> list[str]:
     manifest = _manifest_path(path)
     if not manifest.exists():
+        return []
+    if manifest.is_dir():
+        ui.error(f"{MANIFEST_NAME} must be a manifest file, not a directory.")
         return []
     patterns = []
     for line in manifest.read_text().splitlines():
@@ -661,9 +690,12 @@ def _select_silicons_for_custom_settings(silicons: list[dict]) -> set[str]:
     return selected
 
 
-def _team_setup_configs(silicons: list[dict]) -> dict[str, dict]:
-    base = stemcell.choose_setup_config("Default setup for all team silicons")
-    custom = _select_silicons_for_custom_settings(silicons)
+def _team_setup_configs(silicons: list[dict], opts: PullOpts | None = None) -> dict[str, dict]:
+    kw = opts.setup_config_kwargs() if opts else {}
+    base = stemcell.choose_setup_config("Default setup for all team silicons", **kw)
+    # With an explicit brain (or assume-yes), skip per-silicon customization.
+    custom = set() if (opts and (opts.assume_yes or opts.brain)) else \
+        _select_silicons_for_custom_settings(silicons)
     configs: dict[str, dict] = {}
     for silicon in silicons:
         sid = str(silicon.get("silicon_id") or "").strip()
@@ -689,7 +721,7 @@ def _provider_keys_from_team_pull(body: dict) -> dict[str, str]:
     )
 
 
-def _pull_team(api_key: str, server: str) -> None:
+def _pull_team(api_key: str, server: str, opts: PullOpts | None = None) -> None:
     ui.info("Checking team setup token with Glass...")
     code, body = _post_json_with_team_key(_team_pull_url(server), api_key, {})
     if not (200 <= code < 300):
@@ -705,7 +737,7 @@ def _pull_team(api_key: str, server: str) -> None:
         sys.exit(1)
 
     provider_key_env = _provider_keys_from_team_pull(body)
-    setup_configs = _team_setup_configs(silicons)
+    setup_configs = _team_setup_configs(silicons, opts)
     pulled: list[tuple[str, Path]] = []
 
     for silicon in silicons:
@@ -754,7 +786,7 @@ def _pull_team(api_key: str, server: str) -> None:
     for instance_name, _target in pulled:
         process.start_one(instance_name)
 
-    if ui.interactive() and ui.confirm("Enable daily 23:59 UTC backups for all pulled silicons?"):
+    if _want_backups(opts):
         for instance_name, target in pulled:
             ui.info(f"Running initial backup for '{instance_name}'...")
             ok = _manifest_backup_now(str(target), note="initial")
@@ -764,7 +796,19 @@ def _pull_team(api_key: str, server: str) -> None:
                 ui.warn(f"Initial backup failed. Retry with: silicon backup {instance_name} now")
 
 
-def pull(api_token: str | None) -> None:
+def _want_backups(opts: PullOpts | None) -> bool:
+    """Whether to enable daily backups. An explicit ``--backup/--no-backup`` wins;
+    otherwise ask (or take the non-TTY default). ``--yes`` implies yes."""
+    if opts and opts.backup is not None:
+        return opts.backup
+    if opts and opts.assume_yes:
+        return True
+    if not ui.interactive():
+        return False
+    return ui.confirm("Enable daily 23:59 UTC backups for all pulled silicons?")
+
+
+def pull(api_token: str | None, opts: PullOpts | None = None) -> None:
     api_key = (api_token or "").strip()
     if not api_key:
         ui.info("Paste the team setup token generated from Glass.")
@@ -777,7 +821,7 @@ def pull(api_token: str | None) -> None:
 
     server = GLASS_SERVER_URL.rstrip("/")
     if api_key.startswith("sct_live_"):
-        _pull_team(api_key, server)
+        _pull_team(api_key, server, opts)
         return
 
     ui.info("Checking token with Glass...")
@@ -792,9 +836,15 @@ def pull(api_token: str | None) -> None:
         ui.error("Glass did not return a silicon_id for this token.")
         sys.exit(1)
 
-    default_name = _safe_instance_name(silicon_name, f"silicon-{silicon_id[-6:].lower()}")
+    default_name = _safe_instance_name(
+        (opts.name if opts and opts.name else silicon_name),
+        f"silicon-{silicon_id[-6:].lower()}",
+    )
     instance_name, target = _choose_target(default_name, silicon_id)
     provider_key_env = _choose_glass_provider_keys(server, api_key, silicon)
+    setup_config = stemcell.choose_setup_config("", **opts.setup_config_kwargs()) if (
+        opts and opts.brain
+    ) else None
 
     try:
         _seed_glass_files(
@@ -807,6 +857,7 @@ def pull(api_token: str | None) -> None:
         )
         stemcell.hydrate(
             str(target),
+            setup_config=setup_config,
             install_deps=not docker_runtime.enabled(),
             setup_interface=not docker_runtime.enabled(),
             register_install=not docker_runtime.enabled(),
@@ -822,7 +873,7 @@ def pull(api_token: str | None) -> None:
     ui.info(f"Registered as '{instance_name}'.")
     process.start_one(instance_name)
 
-    if ui.interactive() and ui.confirm("Enable daily 23:59 UTC backups for this silicon?"):
+    if _want_backups(opts):
         ui.info("Running initial backup...")
         ok = _manifest_backup_now(str(target), note="initial")
         if ok:

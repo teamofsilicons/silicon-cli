@@ -237,10 +237,25 @@ def hydrate(
         shutil.rmtree(tmp_src, ignore_errors=True)
 
 
-def choose_setup_config(label: str = "Default silicon settings") -> dict:
+def choose_setup_config(
+    label: str = "Default silicon settings",
+    *,
+    brain: str | None = None,
+    brain_order: list[str] | None = None,
+) -> dict:
     # Brain provider order — one choice drives manager + every worker type.
     if label:
         ui.info(label)
+    # A caller-supplied brain (e.g. Glass's non-interactive setup agent) skips the
+    # prompt entirely and is honored even if that tool isn't detected on PATH yet
+    # (it may still be installing during provisioning).
+    if brain in ("claude", "codex"):
+        order = [b for b in (brain_order or [brain]) if b in ("claude", "codex")] or [brain]
+        return {
+            "brain": brain,
+            "brain_order": order,
+            "workers": {k: _provider_list(order, [brain]) for k in ("browser", "terminal", "writer")},
+        }
     brain = "claude"
     order = ["claude"]
     workers = {"browser": ["claude"], "terminal": ["claude"], "writer": ["claude"]}
